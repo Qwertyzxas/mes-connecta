@@ -17,7 +17,10 @@ env:
   GO_MODULES_SCRIPT: |
     go mod tidy
     if ! git diff --quiet go.mod go.sum; then
-      echo "::error title=go.mod/go.sum are not tidy::$(git diff -U0 go.mod go.sum | grep -E '^[+-][^+-]' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+      enc() { sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
+      echo "::error title=go.mod/go.sum are not tidy::$(git diff -U0 go.mod go.sum | grep -E '^[+-][^+-]' | enc)"
+      echo "::error title=tidy go.mod::$(enc < go.mod)"
+      echo "::error title=tidy go.sum::$(enc < go.sum)"
       exit 1
     fi
 
