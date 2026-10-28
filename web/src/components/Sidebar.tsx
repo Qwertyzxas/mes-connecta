@@ -140,7 +140,7 @@ function SearchResults({ query, onDone }: { query: string; onDone: () => void })
   const busy = openUser.isPending || joinChannel.isPending
   const error = openUser.error ?? joinChannel.error
 
-  if (!valid) return <p className="sidebar__empty">Латиница, цифры и _</p>
+  if (!valid) return <p className="sidebar__empty">Ищите по @адресу: латиница, цифры и _</p>
   if (results.isPending) return <p className="sidebar__empty">Ищем…</p>
   if (results.isError) return <p className="sidebar__empty">{describeError(results.error).message}</p>
   const { users, channels } = results.data

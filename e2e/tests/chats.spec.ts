@@ -128,7 +128,7 @@ test.describe('Личные чаты', () => {
     await expect(page.getByText(`Никого не нашли по @${me.username}`)).toBeVisible()
 
     await ui.search.fill('имя с пробелом')
-    await expect(page.getByText('Имя пользователя: латиница, цифры и _')).toBeVisible()
+    await expect(page.getByText('Ищите по @адресу: латиница, цифры и _')).toBeVisible()
   })
 
   test('на телефоне чат открывается поверх списка', async ({ page, openDevice, isMobile }) => {
