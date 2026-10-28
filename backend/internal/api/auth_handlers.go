@@ -273,6 +273,9 @@ func (s *Server) markRevoked(ctx context.Context, userID, sessionID string) {
 	if err := s.rdb.Set(ctx, revokedKey(sessionID), 1, s.cfg.AccessTTL+time.Minute).Err(); err != nil {
 		s.log.Error("failed to mark session revoked", "session_id", sessionID, "err", err)
 	}
+	if err := s.store.DeleteSessionPushSubscriptions(ctx, sessionID); err != nil {
+		s.log.Error("failed to delete push subscriptions", "session_id", sessionID, "err", err)
+	}
 	if err := s.hub.RevokeSession(ctx, userID, sessionID); err != nil {
 		s.log.Error("failed to close realtime connections", "session_id", sessionID, "err", err)
 	}

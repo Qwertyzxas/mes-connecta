@@ -25,6 +25,9 @@ type Config struct {
 	S3Bucket    string
 	S3UseSSL    bool
 	S3Region    string
+
+	PushSubject       string
+	PushAllowInsecure bool
 }
 
 func Load() (Config, error) {
@@ -48,6 +51,10 @@ func Load() (Config, error) {
 	}
 	if c.TrustProxy, err = strconv.ParseBool(env("TRUST_PROXY", "false")); err != nil {
 		return c, fmt.Errorf("TRUST_PROXY: %w", err)
+	}
+	c.PushSubject = env("PUSH_SUBJECT", "mailto:push@connecta.local")
+	if c.PushAllowInsecure, err = strconv.ParseBool(env("PUSH_ALLOW_INSECURE", "false")); err != nil {
+		return c, fmt.Errorf("PUSH_ALLOW_INSECURE: %w", err)
 	}
 	c.S3Endpoint = os.Getenv("S3_ENDPOINT")
 	c.S3AccessKey = os.Getenv("S3_ACCESS_KEY")

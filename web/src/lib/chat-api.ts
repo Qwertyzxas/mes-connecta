@@ -37,6 +37,7 @@ export const chatApi = {
   setRole: (id: string, userId: string, role: Exclude<Role, 'owner'>) =>
     api<void>(`/chats/${id}/members/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   leave: (id: string) => api<void>(`/chats/${id}/leave`, { method: 'POST' }),
+  mute: (id: string, muted: boolean) => api<void>(`/chats/${id}/mute`, json({ muted })),
   join: (id: string) => api<Chat>(`/channels/${id}/join`, { method: 'POST' }),
   wsTicket: () => api<{ ticket: string }>('/ws/ticket', { method: 'POST' }),
 }

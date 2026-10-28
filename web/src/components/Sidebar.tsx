@@ -259,6 +259,11 @@ function ChatRow({ chat, isTyping }: { chat: Chat; isTyping: boolean }) {
         <span className="row__line">
           <KindIcon kind={chat.kind} />
           <span className="row__title">{title}</span>
+          {chat.muted && (
+            <svg className="muted-icon" viewBox="0 0 24 24" width="14" height="14" aria-label="без уведомлений">
+              <path d="M4 9v6h4l5 4V5L8 9H4Zm13 0 4 6m0-6-4 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
           {last && <span className="row__time">{formatListTime(last.created_at)}</span>}
         </span>
         <span className="row__line">
@@ -272,7 +277,7 @@ function ChatRow({ chat, isTyping }: { chat: Chat; isTyping: boolean }) {
                   : ''}
           </span>
           {chat.unread > 0 ? (
-            <span className="badge-count" aria-label={`Непрочитанных: ${chat.unread}`}>
+            <span className={`badge-count${chat.muted ? ' badge-count--muted' : ''}`} aria-label={`Непрочитанных: ${chat.unread}`}>
               {chat.unread > 99 ? '99+' : chat.unread}
             </span>
           ) : (

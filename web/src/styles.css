@@ -2061,3 +2061,12 @@ a:hover {
   background: #fff;
   transition: width 0.15s;
 }
+
+.muted-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.badge-count--muted {
+  background: var(--text-muted);
+}

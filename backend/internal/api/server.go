@@ -12,6 +12,7 @@ import (
 	"connecta/internal/auth"
 	"connecta/internal/config"
 	"connecta/internal/files"
+	"connecta/internal/push"
 	"connecta/internal/ratelimit"
 	"connecta/internal/realtime"
 	"connecta/internal/store"
@@ -27,13 +28,14 @@ type Server struct {
 	presence *realtime.Presence
 	files    *files.Storage
 	signer   *files.Signer
+	push     *push.Sender
 	log      *slog.Logger
 	now      func() time.Time
 
 	refreshGrace time.Duration
 }
 
-func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratelimit.Limiter, rdb *redis.Client, hub *realtime.Hub, storage *files.Storage, log *slog.Logger) *Server {
+func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratelimit.Limiter, rdb *redis.Client, hub *realtime.Hub, storage *files.Storage, pusher *push.Sender, log *slog.Logger) *Server {
 	return &Server{
 		cfg:      cfg,
 		store:    st,
@@ -44,6 +46,7 @@ func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratel
 		presence: realtime.NewPresence(rdb),
 		files:    storage,
 		signer:   files.NewSigner(cfg.JWTSecret, 24*time.Hour),
+		push:     pusher,
 		log:      log,
 		now:      time.Now,
 
@@ -86,6 +89,9 @@ func (s *Server) Routes() http.Handler {
 
 			r.Post("/ws/ticket", s.handleWSTicket)
 			r.Get("/files/{fileID}/url", s.handleFileURL)
+			r.Get("/push/key", s.handlePushKey)
+			r.Post("/push/subscriptions", s.handleSubscribe)
+			r.Delete("/push/subscriptions", s.handleUnsubscribe)
 			r.Get("/users/search", s.handleSearchUsers)
 			r.Get("/search", s.handleSearch)
 			r.Post("/channels/{chatID}/join", s.handleJoin)
@@ -110,6 +116,7 @@ func (s *Server) Routes() http.Handler {
 					r.Delete("/messages/{messageID}", s.handleDeleteMessage)
 					r.Post("/read", s.handleMarkRead)
 					r.Post("/attachments", s.handleUpload)
+					r.Post("/mute", s.handleMute)
 				})
 			})
 		})

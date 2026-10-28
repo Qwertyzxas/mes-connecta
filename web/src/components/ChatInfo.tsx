@@ -38,11 +38,36 @@ export function ChatInfo({ chat, onClose }: { chat: Chat; onClose: () => void })
                 : membersText(chat)}
           </p>
         </div>
+        <MuteSection chat={chat} />
         {chat.kind !== 'direct' && <AboutSection chat={chat} />}
         {chat.kind !== 'direct' && <MembersSection chat={chat} />}
         {chat.kind !== 'direct' && <LeaveSection chat={chat} />}
       </div>
     </aside>
+  )
+}
+
+function MuteSection({ chat }: { chat: Chat }) {
+  const qc = useQueryClient()
+  const toggle = useMutation({
+    mutationFn: (muted: boolean) => chatApi.mute(chat.id, muted),
+    onMutate: (muted) => {
+      const patch = (c: Chat) => (c.id === chat.id ? { ...c, muted } : c)
+      qc.setQueryData<Chat>(chatKey(chat.id), (c) => (c ? patch(c) : c))
+      qc.setQueryData<Chat[]>(chatsKey, (list) => list?.map(patch))
+    },
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: chatKey(chat.id) })
+      void qc.invalidateQueries({ queryKey: chatsKey })
+    },
+  })
+  return (
+    <section className="info__section">
+      <label className="switch">
+        <input type="checkbox" checked={chat.muted} onChange={(e) => toggle.mutate(e.target.checked)} />
+        <span>Без уведомлений</span>
+      </label>
+    </section>
   )
 }
 
