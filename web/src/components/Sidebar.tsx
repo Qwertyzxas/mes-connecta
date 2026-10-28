@@ -158,7 +158,7 @@ function ChatRow({ chat, isTyping }: { chat: Chat; isTyping: boolean }) {
             {isTyping
               ? 'печатает…'
               : last
-                ? `${mine ? 'Вы: ' : ''}${last.body}`
+                ? `${mine ? 'Вы: ' : ''}${last.deleted_at ? 'Сообщение удалено' : last.body}`
                 : lastSeenText(chat.peer.online, chat.peer.last_seen_at)}
           </span>
           {chat.unread > 0 ? (

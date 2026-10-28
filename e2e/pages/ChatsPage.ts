@@ -14,6 +14,7 @@ export class ChatsPage {
   readonly bubbles: Locator
   readonly composer: Locator
   readonly sendButton: Locator
+  readonly composerContext: Locator
 
   constructor(readonly page: Page) {
     this.search = page.getByLabel('Поиск людей')
@@ -29,6 +30,7 @@ export class ChatsPage {
     this.bubbles = this.log.locator('.bubble-row')
     this.composer = page.getByLabel('Сообщение', { exact: true })
     this.sendButton = page.getByRole('button', { name: 'Отправить' })
+    this.composerContext = page.getByTestId('composer-context')
   }
 
   async goto() {
@@ -47,6 +49,15 @@ export class ChatsPage {
     await this.search.fill(username)
     await this.searchResults.getByRole('button').filter({ hasText: `@${username}` }).click()
     await this.conversation.waitFor()
+  }
+
+  async messageAction(text: string, action: 'Ответить' | 'Копировать' | 'Изменить' | 'Удалить') {
+    await this.bubble(text).getByRole('button', { name: 'Действия с сообщением' }).click()
+    await this.page.getByRole('menuitem', { name: action }).click()
+  }
+
+  menuItems(): Locator {
+    return this.page.getByRole('menu', { name: 'Действия с сообщением' }).getByRole('menuitem')
   }
 
   async send(text: string) {

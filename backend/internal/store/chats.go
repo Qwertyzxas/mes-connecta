@@ -8,11 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-)
-
-var (
-	ErrClientIDConflict = errors.New("client id already used in another chat")
 )
 
 type PublicUser struct {
@@ -23,37 +18,17 @@ type PublicUser struct {
 	Online      bool       `json:"online"`
 }
 
-type Message struct {
-	ID        string    `json:"id"`
-	ChatID    string    `json:"chat_id"`
-	Seq       int64     `json:"seq"`
-	SenderID  string    `json:"sender_id"`
-	ClientID  string    `json:"client_id"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 type Chat struct {
 	ID              string     `json:"id"`
 	Kind            string     `json:"kind"`
 	Peer            PublicUser `json:"peer"`
 	LastSeq         int64      `json:"last_seq"`
+	LastRev         int64      `json:"last_rev"`
 	LastReadSeq     int64      `json:"last_read_seq"`
 	PeerLastReadSeq int64      `json:"peer_last_read_seq"`
 	Unread          int64      `json:"unread"`
 	LastMessage     *Message   `json:"last_message"`
 	UpdatedAt       time.Time  `json:"updated_at"`
-}
-
-const messageColumns = `id::text, conversation_id::text, seq, sender_id::text, client_id::text, body, created_at`
-
-func scanMessage(row scanner) (Message, error) {
-	var m Message
-	err := row.Scan(&m.ID, &m.ChatID, &m.Seq, &m.SenderID, &m.ClientID, &m.Body, &m.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Message{}, ErrNotFound
-	}
-	return m, err
 }
 
 func (s *Store) SearchUsers(ctx context.Context, excludeID, prefix string, limit int) ([]PublicUser, error) {
@@ -192,35 +167,44 @@ func (s *Store) PeerIDs(ctx context.Context, userID string) ([]string, error) {
 }
 
 const chatQuery = `
-	SELECT c.id::text, c.kind, c.last_seq, me.last_read_seq, peer.last_read_seq,
+	SELECT c.id::text, c.kind, c.last_seq, c.last_rev, me.last_read_seq, peer.last_read_seq,
 	       COALESCE(c.last_message_at, c.created_at),
 	       u.id::text, u.username, u.display_name, u.last_seen_at,
-	       m.id::text, m.seq, m.sender_id::text, m.client_id::text, m.body, m.created_at,
+	       m.id::text, m.seq, m.rev, m.sender_id::text, mu.username, mu.display_name,
+	       m.client_id::text, m.body, m.created_at, m.edited_at, m.deleted_at,
 	       (SELECT count(*) FROM messages x
 	         WHERE x.conversation_id = c.id
 	           AND x.seq > me.last_read_seq
-	           AND x.sender_id <> me.user_id)
+	           AND x.sender_id <> me.user_id
+	           AND x.deleted_at IS NULL)
 	FROM conversation_members me
 	JOIN conversations c ON c.id = me.conversation_id
 	JOIN conversation_members peer ON peer.conversation_id = c.id AND peer.user_id <> me.user_id
 	JOIN users u ON u.id = peer.user_id
 	LEFT JOIN messages m ON m.conversation_id = c.id AND m.seq = c.last_seq
+	LEFT JOIN users mu ON mu.id = m.sender_id
 	WHERE me.user_id = $1::uuid`
 
 func scanChat(row scanner) (Chat, error) {
 	var (
-		c         Chat
-		msgID     *string
-		msgSeq    *int64
-		msgSender *string
-		msgClient *string
-		msgBody   *string
-		msgAt     *time.Time
+		c          Chat
+		msgID      *string
+		msgSeq     *int64
+		msgRev     *int64
+		msgSender  *string
+		senderName *string
+		senderDisp *string
+		msgClient  *string
+		msgBody    *string
+		msgAt      *time.Time
+		msgEdited  *time.Time
+		msgDeleted *time.Time
 	)
 	err := row.Scan(
-		&c.ID, &c.Kind, &c.LastSeq, &c.LastReadSeq, &c.PeerLastReadSeq, &c.UpdatedAt,
+		&c.ID, &c.Kind, &c.LastSeq, &c.LastRev, &c.LastReadSeq, &c.PeerLastReadSeq, &c.UpdatedAt,
 		&c.Peer.ID, &c.Peer.Username, &c.Peer.DisplayName, &c.Peer.LastSeenAt,
-		&msgID, &msgSeq, &msgSender, &msgClient, &msgBody, &msgAt,
+		&msgID, &msgSeq, &msgRev, &msgSender, &senderName, &senderDisp,
+		&msgClient, &msgBody, &msgAt, &msgEdited, &msgDeleted,
 		&c.Unread,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -231,8 +215,10 @@ func scanChat(row scanner) (Chat, error) {
 	}
 	if msgID != nil {
 		c.LastMessage = &Message{
-			ID: *msgID, ChatID: c.ID, Seq: *msgSeq, SenderID: *msgSender,
+			ID: *msgID, ChatID: c.ID, Seq: *msgSeq, Rev: *msgRev, SenderID: *msgSender,
+			Sender:   Sender{ID: *msgSender, Username: *senderName, DisplayName: *senderDisp},
 			ClientID: *msgClient, Body: *msgBody, CreatedAt: *msgAt,
+			EditedAt: msgEdited, DeletedAt: msgDeleted,
 		}
 	}
 	return c, nil
@@ -262,159 +248,6 @@ func (s *Store) ListChats(ctx context.Context, userID string) ([]Chat, error) {
 
 func (s *Store) GetChat(ctx context.Context, userID, chatID string) (Chat, error) {
 	return scanChat(s.pool.QueryRow(ctx, chatQuery+` AND c.id = $2::uuid`, userID, chatID))
-}
-
-func (s *Store) InsertMessage(ctx context.Context, chatID, senderID, clientID, body string) (Message, bool, error) {
-	existing, err := s.messageByClientID(ctx, senderID, clientID)
-	switch {
-	case err == nil:
-		if existing.ChatID != chatID {
-			return Message{}, false, ErrClientIDConflict
-		}
-		return existing, false, nil
-	case !errors.Is(err, ErrNotFound):
-		return Message{}, false, err
-	}
-
-	msg, err := s.insertMessageTx(ctx, chatID, senderID, clientID, body)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "messages_sender_client_key" {
-		existing, err := s.messageByClientID(ctx, senderID, clientID)
-		if err != nil {
-			return Message{}, false, err
-		}
-		if existing.ChatID != chatID {
-			return Message{}, false, ErrClientIDConflict
-		}
-		return existing, false, nil
-	}
-	if err != nil {
-		return Message{}, false, err
-	}
-	return msg, true, nil
-}
-
-func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID, body string) (Message, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Message{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	var seq int64
-	if err := tx.QueryRow(ctx, `
-		UPDATE conversations
-		SET last_seq = last_seq + 1, last_message_at = now()
-		WHERE id = $1::uuid
-		RETURNING last_seq`,
-		chatID,
-	).Scan(&seq); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Message{}, ErrNotFound
-		}
-		return Message{}, err
-	}
-
-	msg, err := scanMessage(tx.QueryRow(ctx, `
-		INSERT INTO messages (conversation_id, seq, sender_id, client_id, body)
-		VALUES ($1::uuid, $2, $3::uuid, $4::uuid, $5)
-		RETURNING `+messageColumns,
-		chatID, seq, senderID, clientID, body,
-	))
-	if err != nil {
-		return Message{}, err
-	}
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE conversation_members SET last_read_seq = $3
-		WHERE conversation_id = $1::uuid AND user_id = $2::uuid`,
-		chatID, senderID, seq,
-	); err != nil {
-		return Message{}, err
-	}
-	return msg, tx.Commit(ctx)
-}
-
-func (s *Store) messageByClientID(ctx context.Context, senderID, clientID string) (Message, error) {
-	return scanMessage(s.pool.QueryRow(ctx, `
-		SELECT `+messageColumns+`
-		FROM messages
-		WHERE sender_id = $1::uuid AND client_id = $2::uuid`,
-		senderID, clientID,
-	))
-}
-
-func (s *Store) ListMessages(ctx context.Context, chatID string, beforeSeq, afterSeq int64, limit int) ([]Message, error) {
-	var (
-		rows pgx.Rows
-		err  error
-	)
-	if afterSeq > 0 {
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+messageColumns+`
-			FROM messages
-			WHERE conversation_id = $1::uuid AND seq > $2
-			ORDER BY seq ASC
-			LIMIT $3`,
-			chatID, afterSeq, limit,
-		)
-	} else {
-		if beforeSeq <= 0 {
-			beforeSeq = 1<<62 - 1
-		}
-		rows, err = s.pool.Query(ctx, `
-			SELECT `+messageColumns+`
-			FROM messages
-			WHERE conversation_id = $1::uuid AND seq < $2
-			ORDER BY seq DESC
-			LIMIT $3`,
-			chatID, beforeSeq, limit,
-		)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	messages := []Message{}
-	for rows.Next() {
-		m, err := scanMessage(rows)
-		if err != nil {
-			return nil, err
-		}
-		messages = append(messages, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if afterSeq <= 0 {
-		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-			messages[i], messages[j] = messages[j], messages[i]
-		}
-	}
-	return messages, nil
-}
-
-func (s *Store) MarkRead(ctx context.Context, chatID, userID string, seq int64) (int64, bool, error) {
-	var newSeq int64
-	err := s.pool.QueryRow(ctx, `
-		UPDATE conversation_members m
-		SET last_read_seq = LEAST($3, c.last_seq)
-		FROM conversations c
-		WHERE m.conversation_id = $1::uuid
-		  AND m.user_id = $2::uuid
-		  AND c.id = m.conversation_id
-		  AND m.last_read_seq < LEAST($3, c.last_seq)
-		RETURNING m.last_read_seq`,
-		chatID, userID, seq,
-	).Scan(&newSeq)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, err
-	}
-	return newSeq, true, nil
 }
 
 func (s *Store) SetLastSeen(ctx context.Context, userID string, at time.Time) error {

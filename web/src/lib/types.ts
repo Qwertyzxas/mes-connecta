@@ -42,14 +42,34 @@ export type PublicUser = {
   online: boolean
 }
 
+export type Sender = {
+  id: string
+  username: string
+  display_name: string
+}
+
+export type ReplyPreview = {
+  id: string
+  seq: number
+  sender_id: string
+  sender_name: string
+  body: string
+  deleted: boolean
+}
+
 export type Message = {
   id: string
   chat_id: string
   seq: number
+  rev: number
   sender_id: string
+  sender: Sender
   client_id: string
   body: string
+  reply_to: ReplyPreview | null
   created_at: string
+  edited_at: string | null
+  deleted_at: string | null
 }
 
 export type Chat = {
@@ -57,6 +77,7 @@ export type Chat = {
   kind: 'direct'
   peer: PublicUser
   last_seq: number
+  last_rev: number
   last_read_seq: number
   peer_last_read_seq: number
   unread: number
@@ -67,6 +88,7 @@ export type Chat = {
 export type ServerEvent =
   | { type: 'ready' }
   | { type: 'message.new'; chat_id: string; message: Message }
+  | { type: 'message.updated'; chat_id: string; message: Message }
   | { type: 'chat.read'; chat_id: string; user_id: string; seq: number }
   | { type: 'typing'; chat_id: string; user_id: string }
   | { type: 'presence'; user_id: string; online: boolean; last_seen_at: string | null }

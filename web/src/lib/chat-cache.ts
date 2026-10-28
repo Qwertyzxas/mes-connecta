@@ -59,6 +59,14 @@ export function applyMessage(qc: QueryClient, me: string, message: Message) {
   }
 }
 
+export function applyMessageUpdate(qc: QueryClient, message: Message) {
+  updateChat(qc, message.chat_id, (chat) =>
+    chat.last_message?.id === message.id && message.rev >= chat.last_message.rev
+      ? { ...chat, last_message: message, last_rev: Math.max(chat.last_rev, message.rev) }
+      : chat,
+  )
+}
+
 export function markReadLocally(qc: QueryClient, chatId: string, seq: number) {
   updateChat(qc, chatId, (chat) =>
     seq <= chat.last_read_seq
@@ -79,6 +87,10 @@ export function handleServerEvent(qc: QueryClient, me: string, event: ServerEven
       store.receive(event.message)
       if (event.message.sender_id !== me) store.clearTyping(event.chat_id)
       applyMessage(qc, me, event.message)
+      break
+    case 'message.updated':
+      store.receive(event.message)
+      applyMessageUpdate(qc, event.message)
       break
     case 'chat.read':
       if (event.user_id === me) {

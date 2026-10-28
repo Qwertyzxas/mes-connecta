@@ -89,6 +89,8 @@ func (s *Server) Routes() http.Handler {
 					r.Get("/", s.handleGetChat)
 					r.Get("/messages", s.handleListMessages)
 					r.Post("/messages", s.handleSendMessage)
+					r.Patch("/messages/{messageID}", s.handleEditMessage)
+					r.Delete("/messages/{messageID}", s.handleDeleteMessage)
 					r.Post("/read", s.handleMarkRead)
 				})
 			})
