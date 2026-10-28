@@ -58,10 +58,46 @@ export type ReplyPreview = {
 }
 
 export type SystemMeta = {
-  action: 'created' | 'added' | 'removed' | 'left' | 'renamed'
+  action: 'created' | 'added' | 'removed' | 'left' | 'renamed' | 'call'
   title?: string
   target_id?: string
   target_name?: string
+  call_id?: string
+  video?: boolean
+  status?: CallStatus
+  duration_s?: number
+}
+
+export type CallStatus = 'ringing' | 'active' | 'ended' | 'missed' | 'declined'
+
+export type Call = {
+  id: string
+  chat_id: string
+  chat_kind: ChatKind
+  started_by: string
+  video: boolean
+  status: CallStatus
+  created_at: string
+  answered_at: string | null
+  ended_at: string | null
+  participants: string[]
+}
+
+export type CallSession = {
+  call: Call
+  token: string
+  url: string
+}
+
+export type CallEntry = Call & {
+  chat_title: string
+  peer: PublicUser | null
+}
+
+export type CallerInfo = {
+  id: string
+  username: string
+  display_name: string
 }
 
 export type AttachmentKind = 'image' | 'file' | 'voice'
@@ -129,6 +165,8 @@ export type ServerEvent =
   | { type: 'chat.removed'; chat_id: string }
   | { type: 'typing'; chat_id: string; user_id: string }
   | { type: 'presence'; user_id: string; online: boolean; last_seen_at: string | null }
+  | { type: 'call.incoming'; chat_id: string; call: Call; caller: CallerInfo; chat_title: string }
+  | { type: 'call.updated'; chat_id: string; call: Call }
 
 export type Member = PublicUser & {
   role: Role

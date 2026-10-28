@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"connecta/internal/auth"
+	"connecta/internal/calls"
 	"connecta/internal/config"
 	"connecta/internal/files"
 	"connecta/internal/push"
@@ -29,13 +30,16 @@ type Server struct {
 	files    *files.Storage
 	signer   *files.Signer
 	push     *push.Sender
+	livekit  *calls.LiveKit
 	log      *slog.Logger
 	now      func() time.Time
 
-	refreshGrace time.Duration
+	refreshGrace  time.Duration
+	ringTimeout   time.Duration
+	callJoinGrace time.Duration
 }
 
-func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratelimit.Limiter, rdb *redis.Client, hub *realtime.Hub, storage *files.Storage, pusher *push.Sender, log *slog.Logger) *Server {
+func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratelimit.Limiter, rdb *redis.Client, hub *realtime.Hub, storage *files.Storage, pusher *push.Sender, livekit *calls.LiveKit, log *slog.Logger) *Server {
 	return &Server{
 		cfg:      cfg,
 		store:    st,
@@ -47,10 +51,13 @@ func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratel
 		files:    storage,
 		signer:   files.NewSigner(cfg.JWTSecret, 24*time.Hour),
 		push:     pusher,
+		livekit:  livekit,
 		log:      log,
 		now:      time.Now,
 
-		refreshGrace: 10 * time.Second,
+		refreshGrace:  10 * time.Second,
+		ringTimeout:   45 * time.Second,
+		callJoinGrace: 30 * time.Second,
 	}
 }
 
@@ -95,6 +102,10 @@ func (s *Server) Routes() http.Handler {
 			r.Get("/users/search", s.handleSearchUsers)
 			r.Get("/search", s.handleSearch)
 			r.Post("/channels/{chatID}/join", s.handleJoin)
+			r.Get("/calls", s.handleListCalls)
+			r.Post("/calls/{callID}/join", s.handleJoinCall)
+			r.Post("/calls/{callID}/leave", s.handleLeaveCall)
+			r.Post("/calls/{callID}/decline", s.handleDeclineCall)
 
 			r.Route("/chats", func(r chi.Router) {
 				r.Get("/", s.handleListChats)
@@ -117,6 +128,7 @@ func (s *Server) Routes() http.Handler {
 					r.Post("/read", s.handleMarkRead)
 					r.Post("/attachments", s.handleUpload)
 					r.Post("/mute", s.handleMute)
+					r.Post("/calls", s.handleStartCall)
 				})
 			})
 		})

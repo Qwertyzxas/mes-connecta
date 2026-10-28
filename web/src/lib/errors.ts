@@ -12,6 +12,9 @@ const codeMessages: Record<string, string> = {
   read_only: 'В канале публикуют только администраторы',
   message_deleted: 'Сообщение уже удалено',
   too_many_members: 'В группе слишком много участников',
+  calls_unavailable: 'Звонки пока не настроены на сервере',
+  calls_not_allowed: 'В каналах нет звонков',
+  call_over: 'Звонок уже завершён',
 }
 
 const fieldMessages: Record<string, string> = {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,11 @@ type Config struct {
 
 	PushSubject       string
 	PushAllowInsecure bool
+
+	LiveKitURL       string
+	LiveKitAPIURL    string
+	LiveKitAPIKey    string
+	LiveKitAPISecret string
 }
 
 func Load() (Config, error) {
@@ -56,6 +62,10 @@ func Load() (Config, error) {
 	if c.PushAllowInsecure, err = strconv.ParseBool(env("PUSH_ALLOW_INSECURE", "false")); err != nil {
 		return c, fmt.Errorf("PUSH_ALLOW_INSECURE: %w", err)
 	}
+	c.LiveKitURL = os.Getenv("LIVEKIT_URL")
+	c.LiveKitAPIURL = os.Getenv("LIVEKIT_API_URL")
+	c.LiveKitAPIKey = os.Getenv("LIVEKIT_API_KEY")
+	c.LiveKitAPISecret = os.Getenv("LIVEKIT_API_SECRET")
 	c.S3Endpoint = os.Getenv("S3_ENDPOINT")
 	c.S3AccessKey = os.Getenv("S3_ACCESS_KEY")
 	c.S3SecretKey = os.Getenv("S3_SECRET_KEY")
@@ -72,6 +82,10 @@ func Load() (Config, error) {
 		return c, errors.New("REDIS_URL is required")
 	case c.S3Endpoint == "" || c.S3AccessKey == "" || c.S3SecretKey == "":
 		return c, errors.New("S3_ENDPOINT, S3_ACCESS_KEY and S3_SECRET_KEY are required")
+	case c.LiveKitURL != "" && (c.LiveKitAPIKey == "" || len(c.LiveKitAPISecret) < 32):
+		return c, errors.New("LIVEKIT_API_KEY and LIVEKIT_API_SECRET (at least 32 bytes) are required with LIVEKIT_URL")
+	case strings.HasPrefix(c.LiveKitURL, "/") && c.LiveKitAPIURL == "":
+		return c, errors.New("LIVEKIT_API_URL is required when LIVEKIT_URL is a path")
 	case len(c.JWTSecret) < 32:
 		return c, errors.New("JWT_SECRET must be at least 32 bytes")
 	case c.AccessTTL <= 0 || c.RefreshTTL <= c.AccessTTL:

@@ -4,7 +4,7 @@ import { NavigationRoute, registerRoute } from 'workbox-routing'
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: Array<PrecacheEntry | string> }
 
 type PushPayload = {
-  type: 'message'
+  type: 'message' | 'call'
   chat_id: string
   title: string
   body: string
@@ -44,6 +44,7 @@ self.addEventListener('push', (event) => {
         icon: '/icon-192.png',
         badge: '/icon-192.png',
         data: { url: data.url },
+        requireInteraction: data.type === 'call',
       })
     })(),
   )

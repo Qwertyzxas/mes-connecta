@@ -16,6 +16,10 @@
 		}
 	}
 
+	handle_path /livekit/* {
+		reverse_proxy livekit:7880
+	}
+
 	handle {
 		root * /srv
 

@@ -12,8 +12,10 @@ env:
 		sed -i.bak \
 			-e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$(openssl rand -hex 24)/" \
 			-e "s/^JWT_SECRET=.*/JWT_SECRET=$$(openssl rand -hex 32)/" \
-			-e "s/^S3_SECRET_KEY=.*/S3_SECRET_KEY=$$(openssl rand -hex 24)/" .env && \
+			-e "s/^S3_SECRET_KEY=.*/S3_SECRET_KEY=$$(openssl rand -hex 24)/" \
+			-e "s/^LIVEKIT_API_SECRET=.*/LIVEKIT_API_SECRET=$$(openssl rand -hex 32)/" .env && \
 		rm -f .env.bak && echo ".env created"; }
+	@grep -q '^LIVEKIT_API_SECRET=' .env || echo "LIVEKIT_API_SECRET=$$(openssl rand -hex 32)" >> .env
 	@test -f deploy/s3.json || { set -a && . ./.env && set +a && mkdir -p deploy && \
 		printf '{"identities":[{"name":"connecta","credentials":[{"accessKey":"connecta","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}\n' "$$S3_SECRET_KEY" > deploy/s3.json; }
 
@@ -21,7 +23,7 @@ tidy:
 	cd backend && go mod tidy
 
 deps: env
-	docker compose up -d --wait postgres redis s3
+	docker compose up -d --wait postgres redis s3 livekit
 
 test-db: deps
 	@docker compose exec -T postgres psql -U connecta -d connecta -tAc \
@@ -33,6 +35,7 @@ dev-backend: env
 		DATABASE_URL="$(DB_URL)" \
 		REDIS_URL="redis://localhost:6379/0" \
 		S3_ENDPOINT=localhost:9000 S3_ACCESS_KEY=connecta S3_SECRET_KEY="$$S3_SECRET_KEY" \
+		LIVEKIT_URL=ws://localhost:7880 LIVEKIT_API_KEY=connecta LIVEKIT_API_SECRET="$$LIVEKIT_API_SECRET" \
 		COOKIE_SECURE=false \
 		go run ./cmd/server
 
@@ -54,6 +57,7 @@ test-e2e: test-db
 	@set -a && source .env && set +a && cd e2e && \
 		DATABASE_URL="$(TEST_DB_URL)" REDIS_URL="redis://localhost:6379/14" JWT_SECRET="$$JWT_SECRET" \
 		S3_ENDPOINT=localhost:9000 S3_ACCESS_KEY=connecta S3_SECRET_KEY="$$S3_SECRET_KEY" \
+		LIVEKIT_URL=ws://localhost:7880 LIVEKIT_API_KEY=connecta LIVEKIT_API_SECRET="$$LIVEKIT_API_SECRET" \
 		npx playwright test
 
 vet:

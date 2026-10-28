@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router'
+import { CallLayer } from './components/CallLayer'
 import { ChatPage } from './pages/ChatPage'
 import { ChatsLayout, NoChatSelected } from './pages/ChatsLayout'
 import { LoginPage } from './pages/LoginPage'
@@ -9,7 +10,14 @@ import { useAuth } from './store/auth'
 
 function RequireAuth() {
   const status = useAuth((s) => s.status)
-  return status === 'authenticated' ? <Outlet /> : <Navigate to="/login" replace />
+  return status === 'authenticated' ? (
+    <>
+      <Outlet />
+      <CallLayer />
+    </>
+  ) : (
+    <Navigate to="/login" replace />
+  )
 }
 
 function GuestOnly() {
