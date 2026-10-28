@@ -22,6 +22,7 @@ import (
 
 	"connecta/internal/auth"
 	"connecta/internal/config"
+	"connecta/internal/files"
 	"connecta/internal/ratelimit"
 	"connecta/internal/realtime"
 	"connecta/internal/store"
@@ -30,6 +31,9 @@ import (
 var (
 	migrateOnce sync.Once
 	migrateErr  error
+	storageOnce sync.Once
+	storage     *files.Storage
+	storageErr  error
 	userSeq     atomic.Int64
 )
 
@@ -43,8 +47,9 @@ func setup(t *testing.T) *env {
 	t.Helper()
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	redisURL := os.Getenv("TEST_REDIS_URL")
-	if dbURL == "" || redisURL == "" {
-		t.Skip("TEST_DATABASE_URL and TEST_REDIS_URL are required for integration tests")
+	s3Endpoint := os.Getenv("TEST_S3_ENDPOINT")
+	if dbURL == "" || redisURL == "" || s3Endpoint == "" {
+		t.Skip("TEST_DATABASE_URL, TEST_REDIS_URL and TEST_S3_ENDPOINT are required for integration tests")
 	}
 
 	ctx := context.Background()
@@ -79,6 +84,16 @@ func setup(t *testing.T) *env {
 		RefreshTTL:   time.Hour,
 		CookieSecure: false,
 	}
+	storageOnce.Do(func() {
+		storage, storageErr = files.Open(ctx, files.Config{
+			Endpoint: s3Endpoint, AccessKey: os.Getenv("TEST_S3_ACCESS_KEY"), SecretKey: os.Getenv("TEST_S3_SECRET_KEY"),
+			Bucket: "connecta-test", Region: "us-east-1",
+		})
+	})
+	if storageErr != nil {
+		t.Fatalf("object storage: %v", storageErr)
+	}
+
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	hub, err := realtime.NewHub(ctx, rdb, log)
 	if err != nil {
@@ -86,7 +101,7 @@ func setup(t *testing.T) *env {
 	}
 	t.Cleanup(func() { _ = hub.Close() })
 	srv := New(cfg, store.New(pool), auth.NewTokens(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTL),
-		ratelimit.New(rdb), rdb, hub, log)
+		ratelimit.New(rdb), rdb, hub, storage, log)
 
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
@@ -129,6 +144,36 @@ func (r response) errorCode(t *testing.T) (string, map[string]string) {
 	var body errorBody
 	r.json(t, &body)
 	return body.Error.Code, body.Error.Fields
+}
+
+func (c *client) upload(chatID, query, contentType string, data []byte) response {
+	c.t.Helper()
+	req, err := http.NewRequest(http.MethodPost, c.base+"/api/chats/"+chatID+"/attachments?"+query, bytes.NewReader(data))
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	return response{status: res.StatusCode, header: res.Header, body: bytes.TrimSpace(body)}
+}
+
+func (c *client) get(rawURL string) response {
+	c.t.Helper()
+	res, err := c.http.Get(c.base + rawURL)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	return response{status: res.StatusCode, header: res.Header, body: body}
 }
 
 func (c *client) do(method, path string, body any, headers ...string) response {

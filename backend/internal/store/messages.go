@@ -38,20 +38,21 @@ type ReplyPreview struct {
 }
 
 type Message struct {
-	ID        string          `json:"id"`
-	ChatID    string          `json:"chat_id"`
-	Seq       int64           `json:"seq"`
-	Rev       int64           `json:"rev"`
-	Kind      string          `json:"kind"`
-	Meta      json.RawMessage `json:"meta,omitempty"`
-	SenderID  string          `json:"sender_id"`
-	Sender    Sender          `json:"sender"`
-	ClientID  string          `json:"client_id"`
-	Body      string          `json:"body"`
-	ReplyTo   *ReplyPreview   `json:"reply_to"`
-	CreatedAt time.Time       `json:"created_at"`
-	EditedAt  *time.Time      `json:"edited_at"`
-	DeletedAt *time.Time      `json:"deleted_at"`
+	ID          string          `json:"id"`
+	ChatID      string          `json:"chat_id"`
+	Seq         int64           `json:"seq"`
+	Rev         int64           `json:"rev"`
+	Kind        string          `json:"kind"`
+	Meta        json.RawMessage `json:"meta,omitempty"`
+	SenderID    string          `json:"sender_id"`
+	Sender      Sender          `json:"sender"`
+	ClientID    string          `json:"client_id"`
+	Body        string          `json:"body"`
+	ReplyTo     *ReplyPreview   `json:"reply_to"`
+	CreatedAt   time.Time       `json:"created_at"`
+	EditedAt    *time.Time      `json:"edited_at"`
+	DeletedAt   *time.Time      `json:"deleted_at"`
+	Attachments []Attachment    `json:"attachments"`
 }
 
 type MessageQuery struct {
@@ -122,18 +123,38 @@ func truncate(s string, n int) string {
 	return string([]rune(s)[:n])
 }
 
-func messageByID(ctx context.Context, q querier, id string) (Message, error) {
-	return scanMessage(q.QueryRow(ctx, messageSelect+` WHERE m.id = $1::uuid`, id))
+type fullQuerier interface {
+	querier
+	rowsQuerier
+}
+
+func withAttachments(ctx context.Context, q rowsQuerier, m Message, err error) (Message, error) {
+	if err != nil {
+		return m, err
+	}
+	if err := loadAttachments(ctx, q, []*Message{&m}); err != nil {
+		return Message{}, err
+	}
+	if m.Attachments == nil {
+		m.Attachments = []Attachment{}
+	}
+	return m, nil
+}
+
+func messageByID(ctx context.Context, q fullQuerier, id string) (Message, error) {
+	m, err := scanMessage(q.QueryRow(ctx, messageSelect+` WHERE m.id = $1::uuid`, id))
+	return withAttachments(ctx, q, m, err)
 }
 
 func (s *Store) MessageInChat(ctx context.Context, chatID, messageID string) (Message, error) {
-	return scanMessage(s.pool.QueryRow(ctx, messageSelect+`
+	m, err := scanMessage(s.pool.QueryRow(ctx, messageSelect+`
 		WHERE m.id = $1::uuid AND m.conversation_id = $2::uuid`,
 		messageID, chatID,
 	))
+	return withAttachments(ctx, s.pool, m, err)
 }
 
-func (s *Store) InsertMessage(ctx context.Context, chatID, senderID, clientID, body, replyToID string) (Message, bool, error) {
+func (s *Store) InsertMessage(ctx context.Context, chatID, senderID, clientID, body, replyToID string, attachmentIDs []string) (Message, bool, error) {
 	existing, err := s.messageByClientID(ctx, senderID, clientID)
 	switch {
 	case err == nil:
@@ -145,7 +166,7 @@ func (s *Store) InsertMessage(ctx context.Context, chatID, senderID, clientID, b
 		return Message{}, false, err
 	}
 
-	msg, err := s.insertMessageTx(ctx, chatID, senderID, clientID, body, replyToID)
+	msg, err := s.insertMessageTx(ctx, chatID, senderID, clientID, body, replyToID, attachmentIDs)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "messages_sender_client_key" {
 		existing, err := s.messageByClientID(ctx, senderID, clientID)
@@ -163,7 +184,7 @@ func (s *Store) InsertMessage(ctx context.Context, chatID, senderID, clientID, b
 	return msg, true, nil
 }
 
-func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID, body, replyToID string) (Message, error) {
+func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID, body, replyToID string, attachmentIDs []string) (Message, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Message{}, err
@@ -172,6 +193,7 @@ func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID,
 
 	msg, err := insertIn(ctx, tx, newMessage{
 		ChatID: chatID, SenderID: senderID, ClientID: clientID, Kind: "text", Body: body, ReplyToID: replyToID,
+		AttachmentIDs: attachmentIDs,
 	})
 	if err != nil {
 		return Message{}, err
@@ -180,13 +202,14 @@ func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID,
 }
 
 type newMessage struct {
-	ChatID    string
-	SenderID  string
-	ClientID  string
-	Kind      string
-	Body      string
-	ReplyToID string
-	Meta      any
+	ChatID        string
+	SenderID      string
+	ClientID      string
+	Kind          string
+	Body          string
+	ReplyToID     string
+	Meta          any
+	AttachmentIDs []string
 }
 
 func newUUID() string {
@@ -249,6 +272,10 @@ func insertIn(ctx context.Context, tx pgx.Tx, nm newMessage) (Message, error) {
 		return Message{}, err
 	}
 
+	if err := linkAttachments(ctx, tx, nm.ChatID, nm.SenderID, id, nm.AttachmentIDs); err != nil {
+		return Message{}, err
+	}
+
 	if _, err := tx.Exec(ctx, `
 		UPDATE conversation_members SET last_read_seq = $3
 		WHERE conversation_id = $1::uuid AND user_id = $2::uuid AND last_read_seq < $3`,
@@ -261,10 +288,11 @@ func insertIn(ctx context.Context, tx pgx.Tx, nm newMessage) (Message, error) {
 }
 
 func (s *Store) messageByClientID(ctx context.Context, senderID, clientID string) (Message, error) {
-	return scanMessage(s.pool.QueryRow(ctx, messageSelect+`
+	m, err := scanMessage(s.pool.QueryRow(ctx, messageSelect+`
 		WHERE m.sender_id = $1::uuid AND m.client_id = $2::uuid`,
 		senderID, clientID,
 	))
+	return withAttachments(ctx, s.pool, m, err)
 }
 
 type messageChange func(ctx context.Context, tx pgx.Tx, rev int64) error
@@ -425,6 +453,18 @@ func (s *Store) ListMessages(ctx context.Context, chatID string, q MessageQuery)
 	if q.SinceRev <= 0 && q.AfterSeq <= 0 {
 		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 			messages[i], messages[j] = messages[j], messages[i]
+		}
+	}
+	ptrs := make([]*Message, len(messages))
+	for i := range messages {
+		ptrs[i] = &messages[i]
+	}
+	if err := loadAttachments(ctx, s.pool, ptrs); err != nil {
+		return nil, err
+	}
+	for i := range messages {
+		if messages[i].Attachments == nil {
+			messages[i].Attachments = []Attachment{}
 		}
 	}
 	return messages, nil

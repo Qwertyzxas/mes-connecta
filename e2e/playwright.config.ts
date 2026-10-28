@@ -9,6 +9,10 @@ const backendEnv = {
   JWT_SECRET: process.env.JWT_SECRET ?? 'e2e-secret-e2e-secret-e2e-secret-e2e',
   COOKIE_SECURE: 'false',
   TRUST_PROXY: 'true',
+  S3_ENDPOINT: process.env.S3_ENDPOINT ?? 'localhost:9000',
+  S3_ACCESS_KEY: process.env.S3_ACCESS_KEY ?? 'connecta',
+  S3_SECRET_KEY: process.env.S3_SECRET_KEY ?? 'connecta-secret',
+  S3_BUCKET: 'connecta-e2e',
 }
 
 export default defineConfig({

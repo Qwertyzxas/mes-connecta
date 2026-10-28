@@ -162,6 +162,11 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.withPresence(r.Context(), peers)
+	for i := range chats {
+		if chats[i].LastMessage != nil {
+			s.signMessage(chats[i].LastMessage)
+		}
+	}
 	writeJSON(w, http.StatusOK, chats)
 }
 
@@ -216,6 +221,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
+	s.signMessages(messages)
 	writeJSON(w, http.StatusOK, messages)
 }
 
@@ -236,9 +242,10 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	chatID := chatIDFrom(r.Context())
 
 	var req struct {
-		ClientID  string `json:"client_id"`
-		Body      string `json:"body"`
-		ReplyToID string `json:"reply_to_id"`
+		ClientID      string   `json:"client_id"`
+		Body          string   `json:"body"`
+		ReplyToID     string   `json:"reply_to_id"`
+		AttachmentIDs []string `json:"attachment_ids"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -254,8 +261,15 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if req.ReplyToID != "" && !uuidRe.MatchString(req.ReplyToID) {
 		fields["reply_to_id"] = "invalid"
 	}
-	if p := validateBody(req.Body); p != "" {
-		fields["body"] = p
+	attachmentIDs, ok := normalizeIDs(req.AttachmentIDs)
+	switch {
+	case !ok || len(attachmentIDs) > store.MaxAttachmentsPerMessage:
+		fields["attachment_ids"] = "invalid"
+	case len(attachmentIDs) > 0 && req.Body == "":
+	default:
+		if p := validateBody(req.Body); p != "" {
+			fields["body"] = p
+		}
 	}
 	if len(fields) > 0 {
 		writeValidation(w, fields)
@@ -269,7 +283,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, created, err := s.store.InsertMessage(r.Context(), chatID, me, req.ClientID, req.Body, req.ReplyToID)
+	msg, created, err := s.store.InsertMessage(r.Context(), chatID, me, req.ClientID, req.Body, req.ReplyToID, attachmentIDs)
 	if errors.Is(err, store.ErrClientIDConflict) {
 		writeError(w, http.StatusConflict, "client_id_conflict", "client_id already used")
 		return
@@ -278,11 +292,16 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeValidation(w, map[string]string{"reply_to_id": "not_found"})
 		return
 	}
+	if errors.Is(err, store.ErrAttachmentInvalid) {
+		writeValidation(w, map[string]string{"attachment_ids": "invalid"})
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 
+	s.signMessage(&msg)
 	if !created {
 		writeJSON(w, http.StatusOK, msg)
 		return
@@ -341,6 +360,7 @@ func (s *Server) handleEditMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeChangeError(w, r, err)
 		return
 	}
+	s.signMessage(&msg)
 	if changed {
 		s.broadcastToChat(r.Context(), chatID, messageEvent{Type: "message.updated", ChatID: chatID, Message: msg})
 	}
@@ -361,6 +381,12 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if changed {
+		keys, err := s.store.DeleteMessageAttachments(r.Context(), msg.ID)
+		if err != nil {
+			s.log.Error("detach attachments failed", "message_id", msg.ID, "err", err)
+		}
+		s.removeObjects(keys)
+		msg.Attachments = []store.Attachment{}
 		s.broadcastToChat(r.Context(), chatID, messageEvent{Type: "message.updated", ChatID: chatID, Message: msg})
 	}
 	writeJSON(w, http.StatusOK, msg)
