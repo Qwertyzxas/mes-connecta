@@ -766,7 +766,7 @@ a:hover {
   border-bottom: 1px solid var(--border);
 }
 
-.conversation__back {
+.conversation__head .conversation__back {
   display: none;
 }
 
@@ -1086,7 +1086,7 @@ a:hover {
     border-right: 0;
   }
 
-  .conversation__back {
+  .conversation__head .conversation__back {
     display: grid;
   }
 

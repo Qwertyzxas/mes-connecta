@@ -63,7 +63,7 @@ jobs:
           TEST_REDIS_URL: redis://localhost:6379/0
         run: go test -race -count=1 -v ./... 2>&1 | tee test.log; exit ${PIPESTATUS[0]}
       - name: Report Go tests
-        if: always()
+        if: always() && hashFiles('backend/test.log') != ''
         run: echo "::notice title=Go tests::passed $(grep -c -- '--- PASS' test.log), failed $(grep -c -- '--- FAIL' test.log), skipped $(grep -c -- '--- SKIP' test.log)"
       - name: Fail on skipped integration tests
         run: "! grep -q -- '--- SKIP' test.log"
@@ -136,7 +136,7 @@ jobs:
           REDIS_URL: redis://localhost:6379/1
         run: npx playwright test
       - name: Report E2E
-        if: always()
+        if: always() && hashFiles('e2e/results.json') != ''
         working-directory: e2e
         run: node -e "const s=require('./results.json').stats;console.log('::notice title=E2E tests::passed '+s.expected+', failed '+s.unexpected+', flaky '+s.flaky+', skipped '+s.skipped)"
       - uses: actions/upload-artifact@v5
