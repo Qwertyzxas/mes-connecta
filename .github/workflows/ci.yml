@@ -20,7 +20,8 @@ env:
       enc() { sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
       echo "::error title=go.mod/go.sum are not tidy::$(git diff -U0 go.mod go.sum | grep -E '^[+-][^+-]' | enc)"
       echo "::error title=tidy go.mod::$(enc < go.mod)"
-      echo "::error title=tidy go.sum::$(enc < go.sum)"
+      split -l 30 -d go.sum /tmp/gosum.
+      for part in /tmp/gosum.*; do echo "::error title=tidy go.sum ${part##*.}::$(enc < "$part")"; done
       exit 1
     fi
 
