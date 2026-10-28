@@ -102,6 +102,9 @@ func (s *Server) notifyPush(ctx context.Context, chatID string, msg store.Messag
 	}
 	payload := push.Payload{Type: "message", ChatID: chatID, URL: "/chat/" + chatID, Tag: "chat-" + chatID, Body: text}
 	switch kind {
+	case store.KindSecret:
+		payload.Title = msg.Sender.DisplayName
+		payload.Body = "🔒 Новое сообщение"
 	case store.KindDirect:
 		payload.Title = msg.Sender.DisplayName
 	case store.KindGroup:

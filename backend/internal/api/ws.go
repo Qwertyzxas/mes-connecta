@@ -238,7 +238,7 @@ func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn, client *rea
 			tokens--
 			canType, cached := members[msg.ChatID]
 			if !cached {
-				m, ok, err := s.store.Membership(ctx, msg.ChatID, client.UserID)
+				m, ok, err := s.store.MembershipFor(ctx, msg.ChatID, client.UserID, client.SessionID)
 				if err != nil {
 					continue
 				}
@@ -247,17 +247,17 @@ func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn, client *rea
 			if !canType {
 				continue
 			}
-			ids, err := s.store.MemberIDs(ctx, msg.ChatID)
+			targets, err := s.store.ChatTargets(ctx, msg.ChatID)
 			if err != nil {
 				continue
 			}
-			others := ids[:0]
-			for _, id := range ids {
-				if id != client.UserID {
-					others = append(others, id)
+			others := targets[:0]
+			for _, t := range targets {
+				if t.UserID != client.UserID {
+					others = append(others, t)
 				}
 			}
-			_ = s.hub.Publish(ctx, others, typingEvent{Type: "typing", ChatID: msg.ChatID, UserID: client.UserID})
+			s.publishTargets(ctx, others, typingEvent{Type: "typing", ChatID: msg.ChatID, UserID: client.UserID})
 		}
 	}
 }

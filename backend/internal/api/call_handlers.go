@@ -75,7 +75,7 @@ func (s *Server) handleStartCall(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if membershipFrom(r.Context()).Kind == store.KindChannel {
+	if kind := membershipFrom(r.Context()).Kind; kind == store.KindChannel || kind == store.KindSecret {
 		writeError(w, http.StatusForbidden, "calls_not_allowed", "calls are not available in channels")
 		return
 	}
@@ -155,7 +155,8 @@ func (s *Server) callForMember(w http.ResponseWriter, r *http.Request) (store.Ca
 		s.internalError(w, r, err)
 		return store.Call{}, false
 	}
-	_, ok, err := s.store.Membership(r.Context(), call.ChatID, claimsFrom(r.Context()).Subject)
+	claims := claimsFrom(r.Context())
+	_, ok, err := s.store.MembershipFor(r.Context(), call.ChatID, claims.Subject, claims.SessionID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return store.Call{}, false

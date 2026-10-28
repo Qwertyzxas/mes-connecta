@@ -112,11 +112,13 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/direct", s.handleOpenDirect)
 				r.Post("/group", s.handleCreateGroup)
 				r.Post("/channel", s.handleCreateChannel)
+				r.Post("/secret", s.handleCreateSecret)
 				r.Route("/{chatID}", func(r chi.Router) {
 					r.Use(s.requireMember)
 					r.Get("/", s.handleGetChat)
 					r.Patch("/", s.handleUpdateChat)
 					r.Post("/leave", s.handleLeave)
+					r.Post("/accept", s.handleAcceptSecret)
 					r.Get("/members", s.handleMembers)
 					r.Post("/members", s.handleAddMembers)
 					r.Patch("/members/{userID}", s.handleSetRole)

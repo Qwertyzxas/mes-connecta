@@ -19,7 +19,15 @@ const (
 type envelope struct {
 	Kind      string          `json:"k"`
 	SessionID string          `json:"sid,omitempty"`
+	Only      []string        `json:"only,omitempty"`
+	Except    string          `json:"not,omitempty"`
 	Event     json.RawMessage `json:"e,omitempty"`
+}
+
+type Target struct {
+	UserID    string
+	SessionID string
+	Except    string
 }
 
 type Client struct {
@@ -138,6 +146,68 @@ func (h *Hub) Publish(ctx context.Context, userIDs []string, event any) error {
 	return err
 }
 
+func (h *Hub) PublishTargets(ctx context.Context, targets []Target, event any) error {
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	type route struct {
+		all    bool
+		only   []string
+		except string
+	}
+	routes := map[string]*route{}
+	order := []string{}
+	for _, t := range targets {
+		r, ok := routes[t.UserID]
+		if !ok {
+			r = &route{}
+			routes[t.UserID] = r
+			order = append(order, t.UserID)
+		}
+		switch {
+		case t.SessionID != "":
+			r.only = append(r.only, t.SessionID)
+		case t.Except != "":
+			r.except = t.Except
+		default:
+			r.all = true
+		}
+	}
+	_, err = h.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for _, userID := range order {
+			r := routes[userID]
+			env := envelope{Kind: "event", Event: raw}
+			if !r.all {
+				env.Only = r.only
+				env.Except = r.except
+			}
+			payload, err := json.Marshal(env)
+			if err != nil {
+				return err
+			}
+			p.Publish(ctx, userChannelPrefix+userID, payload)
+		}
+		return nil
+	})
+	return err
+}
+
+func (e envelope) accepts(sessionID string) bool {
+	if e.Except != "" {
+		return sessionID != e.Except
+	}
+	if len(e.Only) == 0 {
+		return true
+	}
+	for _, s := range e.Only {
+		if s == sessionID {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Hub) RevokeSession(ctx context.Context, userID, sessionID string) error {
 	payload, err := json.Marshal(envelope{Kind: "revoke", SessionID: sessionID})
 	if err != nil {
@@ -168,7 +238,9 @@ func (h *Hub) run() {
 		for _, c := range targets {
 			switch env.Kind {
 			case "event":
-				c.enqueue(env.Event)
+				if env.accepts(c.SessionID) {
+					c.enqueue(env.Event)
+				}
 			case "revoke":
 				if c.SessionID == env.SessionID {
 					c.Close()

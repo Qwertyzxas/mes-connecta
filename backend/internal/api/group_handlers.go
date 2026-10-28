@@ -60,7 +60,7 @@ func normalizeIDs(raw []string) ([]string, bool) {
 }
 
 func (s *Server) respondChat(w http.ResponseWriter, r *http.Request, userID, chatID string, status int) {
-	chat, err := s.store.GetChat(r.Context(), userID, chatID)
+	chat, err := s.store.GetChat(r.Context(), userID, claimsFrom(r.Context()).SessionID, chatID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -343,6 +343,14 @@ func (s *Server) handleLeave(w http.ResponseWriter, r *http.Request) {
 	m := membershipFrom(r.Context())
 	if m.Kind == store.KindDirect {
 		writeError(w, http.StatusUnprocessableEntity, "cannot_leave_direct", "direct chats cannot be left")
+		return
+	}
+	if m.Kind == store.KindSecret {
+		if err := s.closeSecret(r.Context(), chatID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.internalError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

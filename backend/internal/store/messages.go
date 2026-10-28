@@ -53,6 +53,7 @@ type Message struct {
 	EditedAt    *time.Time      `json:"edited_at"`
 	DeletedAt   *time.Time      `json:"deleted_at"`
 	Attachments []Attachment    `json:"attachments"`
+	E2E         bool            `json:"e2e,omitempty"`
 }
 
 type MessageQuery struct {
@@ -70,8 +71,10 @@ const messageSelect = `
 	SELECT m.id::text, m.conversation_id::text, m.seq, m.rev, m.kind, m.meta, m.sender_id::text,
 	       su.username, su.display_name, m.client_id::text, m.body,
 	       m.created_at, m.edited_at, m.deleted_at,
-	       r.id::text, r.seq, r.sender_id::text, ru.display_name, r.body, r.deleted_at
+	       r.id::text, r.seq, r.sender_id::text, ru.display_name, r.body, r.deleted_at,
+	       mc.kind = 'secret'
 	FROM messages m
+	JOIN conversations mc ON mc.id = m.conversation_id
 	JOIN users su ON su.id = m.sender_id
 	LEFT JOIN messages r ON r.id = m.reply_to_id
 	LEFT JOIN users ru ON ru.id = r.sender_id`
@@ -92,6 +95,7 @@ func scanMessage(row scanner) (Message, error) {
 		&m.Sender.Username, &m.Sender.DisplayName, &m.ClientID, &m.Body,
 		&m.CreatedAt, &m.EditedAt, &m.DeletedAt,
 		&replyID, &replySeq, &replySender, &replyName, &replyBody, &replyDel,
+		&m.E2E,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, ErrNotFound
@@ -104,12 +108,15 @@ func scanMessage(row scanner) (Message, error) {
 		m.Meta = json.RawMessage(meta)
 	}
 	if replyID != nil {
+		if !m.E2E {
+			*replyBody = truncate(*replyBody, replyPreviewLen)
+		}
 		m.ReplyTo = &ReplyPreview{
 			ID:         *replyID,
 			Seq:        *replySeq,
 			SenderID:   *replySender,
 			SenderName: *replyName,
-			Body:       truncate(*replyBody, replyPreviewLen),
+			Body:       *replyBody,
 			Deleted:    replyDel != nil,
 		}
 	}
