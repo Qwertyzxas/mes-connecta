@@ -9,11 +9,12 @@ export function chatAvatarId(chat: Chat): string {
 }
 
 export function canPost(chat: Chat): boolean {
+  if (chat.kind === 'secret') return chat.secret_state === 'active'
   return chat.kind !== 'channel' || chat.role === 'owner' || chat.role === 'admin'
 }
 
 export function canManage(chat: Chat): boolean {
-  return chat.kind !== 'direct' && (chat.role === 'owner' || chat.role === 'admin')
+  return (chat.kind === 'group' || chat.kind === 'channel') && (chat.role === 'owner' || chat.role === 'admin')
 }
 
 export const roleLabel: Record<Role, string> = {
@@ -70,7 +71,11 @@ export function attachmentsText(message: Message): string {
 
 export function previewText(chat: Chat, message: Message, me: string): string {
   if (message.kind === 'system') return systemText(message, me)
-  const body = message.deleted_at ? 'Сообщение удалено' : message.body || attachmentsText(message)
+  const body = message.deleted_at
+    ? 'Сообщение удалено'
+    : message.undecryptable
+      ? '🔒 Зашифрованное сообщение'
+      : message.body || attachmentsText(message)
   if (message.sender_id === me) return `Вы: ${body}`
   if (chat.kind === 'group') return `${message.sender.display_name}: ${body}`
   return body
@@ -93,4 +98,9 @@ export function callText(message: Message, me: string): string {
     default:
       return kind
   }
+}
+
+export function secretStatus(chat: Chat): string | null {
+  if (chat.kind !== 'secret' || chat.secret_state === 'active') return null
+  return chat.my_key ? 'Ожидаем подтверждения' : 'Приглашение в секретный чат'
 }

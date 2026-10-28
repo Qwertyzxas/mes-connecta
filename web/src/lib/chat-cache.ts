@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { useMessages } from '../store/messages'
 import { chatTitle, previewText } from './chat-display'
+import { forgetChatKeys, isSecret, openMessage } from './e2e'
 import { showLocalNotification } from './push'
 import type { Chat, Message, ServerEvent } from './types'
 
@@ -124,6 +125,7 @@ export function handleServerEvent(qc: QueryClient, me: string, event: ServerEven
       void qc.invalidateQueries({ queryKey: ['members', event.chat_id] })
       break
     case 'chat.removed':
+      if (isSecret(event.chat_id)) void forgetChatKeys(event.chat_id)
       qc.setQueryData<Chat[]>(chatsKey, (list) => list?.filter((c) => c.id !== event.chat_id))
       qc.removeQueries({ queryKey: chatKey(event.chat_id) })
       qc.removeQueries({ queryKey: ['members', event.chat_id] })
@@ -144,4 +146,11 @@ export function handleServerEvent(qc: QueryClient, me: string, event: ServerEven
       break
     }
   }
+}
+
+export async function openEvent(event: ServerEvent): Promise<ServerEvent> {
+  if ((event.type === 'message.new' || event.type === 'message.updated') && event.message.e2e) {
+    return { ...event, message: await openMessage(event.message) }
+  }
+  return event
 }

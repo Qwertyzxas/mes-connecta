@@ -201,18 +201,28 @@ func TestRefreshWithoutCookie(t *testing.T) {
 	expectError(t, e.client(t).refresh(), http.StatusUnauthorized, "no_session")
 }
 
-func TestRefreshRaceWithinGraceReturnsConflict(t *testing.T) {
+func TestRefreshWithinGraceReissuesToken(t *testing.T) {
 	e := setup(t)
 	c := e.client(t)
 	c.register(newCreds())
 	stale := c.refreshCookie()
 	expectStatus(t, c.refresh(), http.StatusOK)
 
-	racer := e.client(t)
-	racer.setRefreshCookie(stale)
-	expectError(t, racer.refresh(), http.StatusConflict, "refresh_conflict")
+	lostResponse := e.client(t)
+	lostResponse.setRefreshCookie(stale)
+	expectStatus(t, lostResponse.refresh(), http.StatusOK)
+	reissued := lostResponse.refreshCookie()
+	if reissued == "" || reissued == stale {
+		t.Fatalf("cookie was not reissued: %q", reissued)
+	}
+	expectStatus(t, lostResponse.do(http.MethodGet, "/api/me", nil), http.StatusOK)
+	expectStatus(t, lostResponse.refresh(), http.StatusOK)
 
-	expectStatus(t, c.refresh(), http.StatusOK)
+	e.srv.refreshGrace = 0
+	thief := e.client(t)
+	thief.setRefreshCookie(reissued)
+	expectError(t, thief.refresh(), http.StatusUnauthorized, "session_expired")
+	expectError(t, lostResponse.refresh(), http.StatusUnauthorized, "session_expired")
 }
 
 func TestRefreshReuseRevokesSession(t *testing.T) {

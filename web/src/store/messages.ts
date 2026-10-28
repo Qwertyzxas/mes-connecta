@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { chatApi } from '../lib/chat-api'
+import { currentSecretUser, encryptBlob, encryptPayload, isSecret, payloadFor, type SecretFile } from '../lib/e2e'
 import type { Attachment, AttachmentKind, Message, ReplyPreview } from '../lib/types'
 import { uploadAttachment } from '../lib/upload'
 
@@ -20,6 +21,7 @@ export type LocalFile = {
 export type PendingAttachment = LocalFile & {
   progress: number
   uploaded?: Attachment
+  secret?: { key: string; iv: string; width?: number; height?: number }
 }
 
 export type PendingMessage = {
@@ -144,13 +146,23 @@ export const useMessages = create<MessagesState>()((set, get) => {
 
   const deliver = async (chatId: string, clientId: string): Promise<Message | null> => {
     const current = () => get().pending[chatId]?.find((p) => p.client_id === clientId)
+    const secret = isSecret(chatId)
     try {
       for (const att of current()?.attachments ?? []) {
         if (att.uploaded) continue
-        const uploaded = await uploadAttachment(chatId, att.blob, {
-          kind: att.kind,
-          name: att.name,
-          durationMs: att.durationMs,
+        let blob = att.blob
+        let sealed: PendingAttachment['secret']
+        if (secret) {
+          const enc = await encryptBlob(att.blob)
+          const bitmap = att.kind === 'image' ? await createImageBitmap(att.blob).catch(() => null) : null
+          sealed = { key: enc.key, iv: enc.iv, width: bitmap?.width, height: bitmap?.height }
+          bitmap?.close()
+          blob = enc.blob
+        }
+        const uploaded = await uploadAttachment(chatId, blob, {
+          kind: secret ? 'file' : att.kind,
+          name: secret ? 'encrypted' : att.name,
+          durationMs: secret ? undefined : att.durationMs,
           onProgress: (progress) =>
             patchPending(chatId, clientId, (p) => ({
               ...p,
@@ -159,13 +171,31 @@ export const useMessages = create<MessagesState>()((set, get) => {
         })
         patchPending(chatId, clientId, (p) => ({
           ...p,
-          attachments: p.attachments.map((a) => (a.localId === att.localId ? { ...a, progress: 1, uploaded } : a)),
+          attachments: p.attachments.map((a) =>
+            a.localId === att.localId ? { ...a, progress: 1, uploaded, secret: sealed } : a,
+          ),
         }))
       }
       const pending = current()
       if (!pending) return null
       const ids = pending.attachments.map((a) => a.uploaded!.id)
-      const msg = await chatApi.send(chatId, pending.client_id, pending.body, pending.reply_to?.id, ids)
+      let body = pending.body
+      if (secret) {
+        const files: SecretFile[] = pending.attachments.map((a) => ({
+          id: a.uploaded!.id,
+          kind: a.kind,
+          name: a.name,
+          type: a.blob.type || 'application/octet-stream',
+          size: a.size,
+          key: a.secret!.key,
+          iv: a.secret!.iv,
+          width: a.secret!.width,
+          height: a.secret!.height,
+          duration_ms: a.durationMs,
+        }))
+        body = await encryptPayload(chatId, currentSecretUser(), files.length ? { v: 1, t: body, f: files } : { v: 1, t: body })
+      }
+      const msg = await chatApi.send(chatId, pending.client_id, body, pending.reply_to?.id, ids)
       get().receive(msg)
       removePending(chatId, clientId)
       return msg
@@ -304,7 +334,13 @@ export const useMessages = create<MessagesState>()((set, get) => {
     discard: (chatId, clientId) => removePending(chatId, clientId),
 
     edit: async (chatId, messageId, body) => {
-      const msg = await chatApi.edit(chatId, messageId, body)
+      let sealed = body
+      if (isSecret(chatId)) {
+        const original = get().byChat[chatId]?.items.find((m) => m.id === messageId)
+        if (!original) return
+        sealed = await encryptPayload(chatId, currentSecretUser(), payloadFor(original, body))
+      }
+      const msg = await chatApi.edit(chatId, messageId, sealed)
       get().receive(msg)
     },
 

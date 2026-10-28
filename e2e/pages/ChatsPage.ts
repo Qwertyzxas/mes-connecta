@@ -51,6 +51,19 @@ export class ChatsPage {
     return this.page.locator('ul[aria-label="Чаты"] a').filter({ hasText: displayName })
   }
 
+  secretRow(displayName: string): Locator {
+    return this.chatRow(displayName).filter({ has: this.page.getByRole('img', { name: 'секретный чат' }) })
+  }
+
+  async createSecretChat(username: string) {
+    await this.page.getByRole('button', { name: 'Создать', exact: true }).click()
+    await this.page.getByRole('menuitem', { name: 'Секретный чат' }).click()
+    const dialog = this.page.getByRole('dialog', { name: 'Секретный чат' })
+    await this.pickUsers(dialog, [username])
+    await dialog.getByRole('button', { name: 'Начать секретный чат' }).click()
+    await this.conversation.waitFor()
+  }
+
   bubble(text: string): Locator {
     return this.bubbles.filter({ hasText: text })
   }

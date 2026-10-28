@@ -29,6 +29,13 @@ export async function signUp(page: Page, user: Credentials) {
   await expect(new ChatsPage(page).search).toBeVisible()
 }
 
+export async function signIn(page: Page, user: Credentials) {
+  const res = await page.request.post('/api/auth/login', { data: { email: user.email, password: user.password } })
+  expect(res.status(), await res.text()).toBe(200)
+  await page.goto('/')
+  await expect(new ChatsPage(page).search).toBeVisible()
+}
+
 export const test = base.extend<Fixtures>({
   extraHTTPHeaders: async ({}, use) => {
     await use({ 'X-Real-IP': randomIp() })

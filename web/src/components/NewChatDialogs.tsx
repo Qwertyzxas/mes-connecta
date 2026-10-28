@@ -6,6 +6,7 @@ import { Field } from './Field'
 import { Modal } from './Modal'
 import { UserPicker } from './UserPicker'
 import { chatApi } from '../lib/chat-api'
+import { generateKeyPair, storeKeyPair } from '../lib/e2e'
 import { upsertChat } from '../lib/chat-cache'
 import { describeError } from '../lib/errors'
 import type { Chat, PublicUser } from '../lib/types'
@@ -126,6 +127,42 @@ export function NewChannelDialog({ onClose }: { onClose: () => void }) {
           />
         )}
       </form>
+    </Modal>
+  )
+}
+
+export function NewSecretDialog({ onClose }: { onClose: () => void }) {
+  const [picked, setPicked] = useState<PublicUser[]>([])
+  const opened = useOpenCreated(onClose)
+  const peer = picked.at(-1)
+  const create = useMutation({
+    mutationFn: async () => {
+      const pair = await generateKeyPair()
+      const chat = await chatApi.createSecret(peer!.id, pair.publicKey)
+      await storeKeyPair(chat.id, pair)
+      return chat
+    },
+    onSuccess: opened,
+  })
+
+  return (
+    <Modal
+      title="Секретный чат"
+      onClose={onClose}
+      footer={
+        <Button onClick={() => create.mutate()} disabled={!peer} loading={create.isPending}>
+          Начать секретный чат
+        </Button>
+      }
+    >
+      <div className="form form--tight">
+        <p className="muted">
+          Сообщения и файлы шифруются на устройствах. Сервер видит только зашифрованные данные. Чат будет доступен только
+          на этом устройстве и на одном устройстве собеседника.
+        </p>
+        {create.isError && <div className="alert">{describeError(create.error).message}</div>}
+        <UserPicker selected={peer ? [peer] : []} onChange={(list) => setPicked(list.slice(-1))} />
+      </div>
     </Modal>
   )
 }

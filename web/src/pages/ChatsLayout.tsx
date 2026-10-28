@@ -2,7 +2,8 @@ import { useEffect } from 'react'
 import { Outlet, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { Sidebar } from '../components/Sidebar'
-import { handleServerEvent } from '../lib/chat-cache'
+import { handleServerEvent, openEvent } from '../lib/chat-cache'
+import { setSecretUser } from '../lib/e2e'
 import { refreshPushState } from '../lib/push'
 import { realtime } from '../lib/realtime'
 import { useAuth } from '../store/auth'
@@ -14,7 +15,14 @@ export function ChatsLayout() {
 
   useEffect(() => {
     if (!me) return
-    const unsubscribe = realtime.subscribe((event) => handleServerEvent(qc, me, event))
+    setSecretUser(me)
+    let queue = Promise.resolve()
+    const unsubscribe = realtime.subscribe((event) => {
+      queue = queue
+        .then(() => openEvent(event))
+        .then((opened) => handleServerEvent(qc, me, opened))
+        .catch(() => {})
+    })
     realtime.start()
     void refreshPushState()
     return unsubscribe

@@ -130,9 +130,11 @@ export type Message = {
   edited_at: string | null
   deleted_at: string | null
   attachments: Attachment[]
+  e2e?: boolean
+  undecryptable?: boolean
 }
 
-export type ChatKind = 'direct' | 'group' | 'channel'
+export type ChatKind = 'direct' | 'group' | 'channel' | 'secret'
 export type Role = 'owner' | 'admin' | 'member'
 
 export type Chat = {
@@ -154,6 +156,9 @@ export type Chat = {
   unread: number
   last_message: Message | null
   updated_at: string
+  secret_state?: 'pending' | 'active'
+  my_key?: string
+  peer_key?: string
 }
 
 export type ServerEvent =

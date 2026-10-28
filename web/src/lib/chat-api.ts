@@ -1,4 +1,5 @@
 import { api, json } from './api'
+import { openChat, openChats, openMessage, openMessages } from './e2e'
 import type { Call, CallEntry, CallSession, Chat, Member, Message, PublicUser, Role, SearchResult } from './types'
 
 export const callApi = {
@@ -13,8 +14,12 @@ export const callApi = {
 export const chatApi = {
   searchUsers: (q: string) => api<PublicUser[]>(`/users/search?q=${encodeURIComponent(q)}`),
   openDirect: (userId: string) => api<Chat>('/chats/direct', json({ user_id: userId })),
-  list: () => api<Chat[]>('/chats'),
-  get: (id: string) => api<Chat>(`/chats/${id}`),
+  list: async () => openChats(await api<Chat[]>('/chats')),
+  get: async (id: string) => openChat(await api<Chat>(`/chats/${id}`)),
+  createSecret: async (userId: string, publicKey: string) =>
+    openChat(await api<Chat>('/chats/secret', json({ user_id: userId, public_key: publicKey }))),
+  acceptSecret: async (id: string, publicKey: string) =>
+    openChat(await api<Chat>(`/chats/${id}/accept`, json({ public_key: publicKey }))),
   messages: (id: string, params: { before?: number; after?: number; since?: number; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (params.before) q.set('before_seq', String(params.before))
@@ -22,17 +27,18 @@ export const chatApi = {
     if (params.since) q.set('since_rev', String(params.since))
     if (params.limit) q.set('limit', String(params.limit))
     const qs = q.toString()
-    return api<Message[]>(`/chats/${id}/messages${qs ? `?${qs}` : ''}`)
+    return api<Message[]>(`/chats/${id}/messages${qs ? `?${qs}` : ''}`).then(openMessages)
   },
   send: (id: string, clientId: string, body: string, replyToId?: string, attachmentIds: string[] = []) =>
     api<Message>(
       `/chats/${id}/messages`,
       json({ client_id: clientId, body, reply_to_id: replyToId ?? '', attachment_ids: attachmentIds }),
-    ),
+    ).then(openMessage),
   fileUrl: (fileId: string) => api<{ url: string }>(`/files/${fileId}/url`),
   edit: (id: string, messageId: string, body: string) =>
-    api<Message>(`/chats/${id}/messages/${messageId}`, { method: 'PATCH', body: JSON.stringify({ body }) }),
-  remove: (id: string, messageId: string) => api<Message>(`/chats/${id}/messages/${messageId}`, { method: 'DELETE' }),
+    api<Message>(`/chats/${id}/messages/${messageId}`, { method: 'PATCH', body: JSON.stringify({ body }) }).then(openMessage),
+  remove: (id: string, messageId: string) =>
+    api<Message>(`/chats/${id}/messages/${messageId}`, { method: 'DELETE' }).then(openMessage),
   markRead: (id: string, seq: number) => api<void>(`/chats/${id}/read`, json({ seq })),
   search: (q: string) => api<SearchResult>(`/search?q=${encodeURIComponent(q)}`),
   createGroup: (title: string, memberIds: string[]) => api<Chat>('/chats/group', json({ title, member_ids: memberIds })),
