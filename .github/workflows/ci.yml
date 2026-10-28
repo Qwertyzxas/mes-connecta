@@ -16,7 +16,10 @@ permissions:
 env:
   GO_MODULES_SCRIPT: |
     go mod tidy
-    git diff --exit-code go.mod go.sum || { echo "::error::go.mod/go.sum are not tidy, run go mod tidy"; exit 1; }
+    if ! git diff --quiet go.mod go.sum; then
+      echo "::error title=go.mod/go.sum are not tidy::$(git diff -U0 go.mod go.sum | grep -E '^[+-][^+-]' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+      exit 1
+    fi
 
 jobs:
   backend:

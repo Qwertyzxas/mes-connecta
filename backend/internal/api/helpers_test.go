@@ -23,6 +23,7 @@ import (
 	"connecta/internal/auth"
 	"connecta/internal/config"
 	"connecta/internal/ratelimit"
+	"connecta/internal/realtime"
 	"connecta/internal/store"
 )
 
@@ -78,8 +79,14 @@ func setup(t *testing.T) *env {
 		RefreshTTL:   time.Hour,
 		CookieSecure: false,
 	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	hub, err := realtime.NewHub(ctx, rdb, log)
+	if err != nil {
+		t.Fatalf("realtime hub: %v", err)
+	}
+	t.Cleanup(func() { _ = hub.Close() })
 	srv := New(cfg, store.New(pool), auth.NewTokens(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTL),
-		ratelimit.New(rdb), rdb, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		ratelimit.New(rdb), rdb, hub, log)
 
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
@@ -92,6 +99,7 @@ type client struct {
 	http  *http.Client
 	token string
 	ua    string
+	user  store.User
 }
 
 func (e *env) client(t *testing.T) *client {
@@ -207,6 +215,7 @@ func (c *client) register(cr creds) authResponse {
 	var out authResponse
 	res.json(c.t, &out)
 	c.token = out.AccessToken
+	c.user = out.User
 	return out
 }
 
@@ -219,6 +228,7 @@ func (c *client) login(cr creds) authResponse {
 	var out authResponse
 	res.json(c.t, &out)
 	c.token = out.AccessToken
+	c.user = out.User
 	return out
 }
 

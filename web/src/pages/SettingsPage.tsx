@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
+import { Avatar } from '../components/Avatar'
 import { Button } from '../components/Button'
-import { Logo } from '../components/Logo'
 import { authApi } from '../lib/auth-api'
 import { describeError } from '../lib/errors'
 import { describeDevice, timeAgo } from '../lib/format'
 import type { Session } from '../lib/types'
 import { useAuth } from '../store/auth'
 
-export function HomePage() {
+export function SettingsPage() {
   const user = useAuth((s) => s.user)
   const signOut = useAuth((s) => s.signOut)
   const queryClient = useQueryClient()
@@ -25,17 +26,12 @@ export function HomePage() {
 
   if (!user) return null
 
-  const initials = (user.display_name || user.username)
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase()
-
   return (
     <div className="home">
       <header className="home__bar">
-        <Logo />
+        <Link to="/" className="back-link">
+          ← К чатам
+        </Link>
         <Button variant="ghost" onClick={() => logout.mutate()} loading={logout.isPending}>
           Выйти
         </Button>
@@ -43,9 +39,7 @@ export function HomePage() {
 
       <main className="home__content">
         <section className="profile">
-          <div className="avatar" aria-hidden="true">
-            {initials}
-          </div>
+          <Avatar id={user.id} name={user.display_name} size={56} />
           <div>
             <h1 className="profile__name">{user.display_name}</h1>
             <p className="profile__meta">
@@ -90,9 +84,6 @@ export function HomePage() {
           </ul>
         </section>
 
-        <section className="placeholder">
-          <p>Чаты появятся на следующем этапе.</p>
-        </section>
       </main>
     </div>
   )

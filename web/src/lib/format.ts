@@ -48,3 +48,44 @@ export function describeDevice(ua: string): string {
 
   return os ? `${browser}, ${os}` : browser
 }
+
+const timeFmt = new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' })
+const dayFmt = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long' })
+const dayYearFmt = new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', year: 'numeric' })
+const shortDateFmt = new Intl.DateTimeFormat('ru', { day: '2-digit', month: '2-digit', year: '2-digit' })
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+const DAY = 24 * 3600 * 1000
+
+export function formatTime(iso: string): string {
+  return timeFmt.format(new Date(iso))
+}
+
+export function dayKey(iso: string): number {
+  return startOfDay(new Date(iso))
+}
+
+export function formatDay(iso: string, now = new Date()): string {
+  const d = new Date(iso)
+  const diff = Math.round((startOfDay(now) - startOfDay(d)) / DAY)
+  if (diff === 0) return 'Сегодня'
+  if (diff === 1) return 'Вчера'
+  return d.getFullYear() === now.getFullYear() ? dayFmt.format(d) : dayYearFmt.format(d)
+}
+
+export function formatListTime(iso: string, now = new Date()): string {
+  const d = new Date(iso)
+  const diff = Math.round((startOfDay(now) - startOfDay(d)) / DAY)
+  if (diff === 0) return timeFmt.format(d)
+  if (diff === 1) return 'вчера'
+  if (diff < 7) return new Intl.DateTimeFormat('ru', { weekday: 'short' }).format(d)
+  return shortDateFmt.format(d)
+}
+
+export function lastSeenText(online: boolean, lastSeen: string | null, now = Date.now()): string {
+  if (online) return 'в сети'
+  if (!lastSeen) return 'был(а) давно'
+  const seconds = (now - new Date(lastSeen).getTime()) / 1000
+  if (seconds < 60) return 'был(а) только что'
+  return `был(а) ${timeAgo(lastSeen, now)}`
+}

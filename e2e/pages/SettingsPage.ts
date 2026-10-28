@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
-export class HomePage {
+export class SettingsPage {
   readonly name: Locator
   readonly meta: Locator
   readonly logout: Locator
@@ -18,7 +18,7 @@ export class HomePage {
   }
 
   async goto() {
-    await this.page.goto('/')
+    await this.page.goto('/settings')
   }
 
   async revokeOtherSession() {
