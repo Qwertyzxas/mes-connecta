@@ -11,14 +11,15 @@ env:
 		cp .env.example .env && \
 		sed -i.bak \
 			-e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$(openssl rand -hex 24)/" \
-			-e "s/^JWT_SECRET=.*/JWT_SECRET=$$(openssl rand -hex 32)/" .env && \
+			-e "s/^JWT_SECRET=.*/JWT_SECRET=$$(openssl rand -hex 32)/" \
+			-e "s/^S3_SECRET_KEY=.*/S3_SECRET_KEY=$$(openssl rand -hex 24)/" .env && \
 		rm -f .env.bak && echo ".env created"; }
 
 tidy:
 	cd backend && go mod tidy
 
 deps: env
-	docker compose up -d --wait postgres redis
+	docker compose up -d --wait postgres redis minio
 
 test-db: deps
 	@docker compose exec -T postgres psql -U connecta -d connecta -tAc \
@@ -29,6 +30,7 @@ dev-backend: env
 	@set -a && source .env && set +a && cd backend && \
 		DATABASE_URL="$(DB_URL)" \
 		REDIS_URL="redis://localhost:6379/0" \
+		S3_ENDPOINT=localhost:9000 S3_ACCESS_KEY=connecta S3_SECRET_KEY="$$S3_SECRET_KEY" \
 		COOKIE_SECURE=false \
 		go run ./cmd/server
 
@@ -43,11 +45,13 @@ test: test-backend test-e2e
 test-backend: test-db
 	@set -a && source .env && set +a && cd backend && \
 		TEST_DATABASE_URL="$(TEST_DB_URL)" TEST_REDIS_URL="redis://localhost:6379/15" \
+		TEST_S3_ENDPOINT=localhost:9000 TEST_S3_ACCESS_KEY=connecta TEST_S3_SECRET_KEY="$$S3_SECRET_KEY" \
 		go test -race -count=1 ./...
 
 test-e2e: test-db
 	@set -a && source .env && set +a && cd e2e && \
 		DATABASE_URL="$(TEST_DB_URL)" REDIS_URL="redis://localhost:6379/14" JWT_SECRET="$$JWT_SECRET" \
+		S3_ENDPOINT=localhost:9000 S3_ACCESS_KEY=connecta S3_SECRET_KEY="$$S3_SECRET_KEY" \
 		npx playwright test
 
 vet:

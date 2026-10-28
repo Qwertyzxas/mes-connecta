@@ -70,6 +70,9 @@ func (s *Server) respondChat(w http.ResponseWriter, r *http.Request, userID, cha
 }
 
 func (s *Server) decorateChat(ctx context.Context, chat *store.Chat) {
+	if chat.LastMessage != nil {
+		s.signMessage(chat.LastMessage)
+	}
 	if chat.Peer != nil {
 		s.withPresence(ctx, []*store.PublicUser{chat.Peer})
 		return

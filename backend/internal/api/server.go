@@ -11,6 +11,7 @@ import (
 
 	"connecta/internal/auth"
 	"connecta/internal/config"
+	"connecta/internal/files"
 	"connecta/internal/ratelimit"
 	"connecta/internal/realtime"
 	"connecta/internal/store"
@@ -24,13 +25,15 @@ type Server struct {
 	rdb      *redis.Client
 	hub      *realtime.Hub
 	presence *realtime.Presence
+	files    *files.Storage
+	signer   *files.Signer
 	log      *slog.Logger
 	now      func() time.Time
 
 	refreshGrace time.Duration
 }
 
-func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratelimit.Limiter, rdb *redis.Client, hub *realtime.Hub, log *slog.Logger) *Server {
+func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratelimit.Limiter, rdb *redis.Client, hub *realtime.Hub, storage *files.Storage, log *slog.Logger) *Server {
 	return &Server{
 		cfg:      cfg,
 		store:    st,
@@ -39,6 +42,8 @@ func New(cfg config.Config, st *store.Store, tokens *auth.Tokens, limiter *ratel
 		rdb:      rdb,
 		hub:      hub,
 		presence: realtime.NewPresence(rdb),
+		files:    storage,
+		signer:   files.NewSigner(cfg.JWTSecret, 24*time.Hour),
 		log:      log,
 		now:      time.Now,
 
@@ -71,6 +76,7 @@ func (s *Server) Routes() http.Handler {
 		})
 
 		r.Get("/ws", s.handleWebSocket)
+		r.Get("/files/{fileID}", s.handleFile)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -79,6 +85,7 @@ func (s *Server) Routes() http.Handler {
 			r.Delete("/sessions/{id}", s.handleRevokeSession)
 
 			r.Post("/ws/ticket", s.handleWSTicket)
+			r.Get("/files/{fileID}/url", s.handleFileURL)
 			r.Get("/users/search", s.handleSearchUsers)
 			r.Get("/search", s.handleSearch)
 			r.Post("/channels/{chatID}/join", s.handleJoin)
@@ -102,6 +109,7 @@ func (s *Server) Routes() http.Handler {
 					r.Patch("/messages/{messageID}", s.handleEditMessage)
 					r.Delete("/messages/{messageID}", s.handleDeleteMessage)
 					r.Post("/read", s.handleMarkRead)
+					r.Post("/attachments", s.handleUpload)
 				})
 			})
 		})

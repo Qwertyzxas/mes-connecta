@@ -685,11 +685,37 @@ func (s *Store) ListChats(ctx context.Context, userID string) ([]Chat, error) {
 		}
 		chats = append(chats, c)
 	}
-	return chats, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	var last []*Message
+	for i := range chats {
+		if chats[i].LastMessage != nil {
+			last = append(last, chats[i].LastMessage)
+		}
+	}
+	return chats, s.finishMessages(ctx, last)
+}
+
+func (s *Store) finishMessages(ctx context.Context, messages []*Message) error {
+	if err := loadAttachments(ctx, s.pool, messages); err != nil {
+		return err
+	}
+	for _, m := range messages {
+		if m.Attachments == nil {
+			m.Attachments = []Attachment{}
+		}
+	}
+	return nil
 }
 
 func (s *Store) GetChat(ctx context.Context, userID, chatID string) (Chat, error) {
-	return scanChat(s.pool.QueryRow(ctx, chatQuery+` AND c.id = $2::uuid`, userID, chatID))
+	c, err := scanChat(s.pool.QueryRow(ctx, chatQuery+` AND c.id = $2::uuid`, userID, chatID))
+	if err != nil || c.LastMessage == nil {
+		return c, err
+	}
+	return c, s.finishMessages(ctx, []*Message{c.LastMessage})
 }
 
 func (s *Store) SetLastSeen(ctx context.Context, userID string, at time.Time) error {

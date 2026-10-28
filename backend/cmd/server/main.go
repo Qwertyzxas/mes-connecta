@@ -16,6 +16,7 @@ import (
 	"connecta/internal/api"
 	"connecta/internal/auth"
 	"connecta/internal/config"
+	"connecta/internal/files"
 	"connecta/internal/ratelimit"
 	"connecta/internal/realtime"
 	"connecta/internal/store"
@@ -58,6 +59,14 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("redis: %w", err)
 	}
 
+	storage, err := files.Open(ctx, files.Config{
+		Endpoint: cfg.S3Endpoint, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey,
+		Bucket: cfg.S3Bucket, UseSSL: cfg.S3UseSSL, Region: cfg.S3Region,
+	})
+	if err != nil {
+		return fmt.Errorf("object storage: %w", err)
+	}
+
 	hub, err := realtime.NewHub(ctx, rdb, log)
 	if err != nil {
 		return fmt.Errorf("realtime hub: %w", err)
@@ -71,6 +80,7 @@ func run(log *slog.Logger) error {
 		ratelimit.New(rdb),
 		rdb,
 		hub,
+		storage,
 		log,
 	)
 

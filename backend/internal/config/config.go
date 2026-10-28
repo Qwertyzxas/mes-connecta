@@ -18,6 +18,13 @@ type Config struct {
 	RefreshTTL   time.Duration
 	CookieSecure bool
 	TrustProxy   bool
+
+	S3Endpoint  string
+	S3AccessKey string
+	S3SecretKey string
+	S3Bucket    string
+	S3UseSSL    bool
+	S3Region    string
 }
 
 func Load() (Config, error) {
@@ -42,12 +49,22 @@ func Load() (Config, error) {
 	if c.TrustProxy, err = strconv.ParseBool(env("TRUST_PROXY", "false")); err != nil {
 		return c, fmt.Errorf("TRUST_PROXY: %w", err)
 	}
+	c.S3Endpoint = os.Getenv("S3_ENDPOINT")
+	c.S3AccessKey = os.Getenv("S3_ACCESS_KEY")
+	c.S3SecretKey = os.Getenv("S3_SECRET_KEY")
+	c.S3Bucket = env("S3_BUCKET", "connecta")
+	c.S3Region = env("S3_REGION", "us-east-1")
+	if c.S3UseSSL, err = strconv.ParseBool(env("S3_USE_SSL", "false")); err != nil {
+		return c, fmt.Errorf("S3_USE_SSL: %w", err)
+	}
 
 	switch {
 	case c.DatabaseURL == "":
 		return c, errors.New("DATABASE_URL is required")
 	case c.RedisURL == "":
 		return c, errors.New("REDIS_URL is required")
+	case c.S3Endpoint == "" || c.S3AccessKey == "" || c.S3SecretKey == "":
+		return c, errors.New("S3_ENDPOINT, S3_ACCESS_KEY and S3_SECRET_KEY are required")
 	case len(c.JWTSecret) < 32:
 		return c, errors.New("JWT_SECRET must be at least 32 bytes")
 	case c.AccessTTL <= 0 || c.RefreshTTL <= c.AccessTTL:
