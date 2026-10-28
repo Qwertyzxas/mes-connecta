@@ -192,20 +192,27 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	before, okBefore := parseSeq(q.Get("before_seq"))
 	after, okAfter := parseSeq(q.Get("after_seq"))
-	limit := defaultPageSize
+	since, okSince := parseSeq(q.Get("since_rev"))
+	limit, okLimit := defaultPageSize, true
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			okAfter = false
-		}
+		okLimit = err == nil && n >= 1
 		limit = min(n, maxPageSize)
 	}
-	if !okBefore || !okAfter || (before > 0 && after > 0) {
+	modes := 0
+	for _, v := range []int64{before, after, since} {
+		if v > 0 {
+			modes++
+		}
+	}
+	if !okBefore || !okAfter || !okSince || !okLimit || modes > 1 {
 		writeError(w, http.StatusBadRequest, "bad_request", "invalid paging parameters")
 		return
 	}
 
-	messages, err := s.store.ListMessages(r.Context(), chatIDFrom(r.Context()), before, after, limit)
+	messages, err := s.store.ListMessages(r.Context(), chatIDFrom(r.Context()), store.MessageQuery{
+		BeforeSeq: before, AfterSeq: after, SinceRev: since, Limit: limit,
+	})
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -213,31 +220,43 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, messages)
 }
 
+func validateBody(body string) string {
+	switch {
+	case body == "":
+		return "empty"
+	case !utf8.ValidString(body):
+		return "invalid"
+	case utf8.RuneCountInString(body) > maxMessageLen:
+		return "too_long"
+	}
+	return ""
+}
+
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	me := claimsFrom(r.Context()).Subject
 	chatID := chatIDFrom(r.Context())
 
 	var req struct {
-		ClientID string `json:"client_id"`
-		Body     string `json:"body"`
+		ClientID  string `json:"client_id"`
+		Body      string `json:"body"`
+		ReplyToID string `json:"reply_to_id"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	req.ClientID = strings.ToLower(strings.TrimSpace(req.ClientID))
+	req.ReplyToID = strings.ToLower(strings.TrimSpace(req.ReplyToID))
 	req.Body = strings.TrimSpace(req.Body)
 
 	fields := map[string]string{}
 	if !uuidRe.MatchString(req.ClientID) {
 		fields["client_id"] = "invalid"
 	}
-	switch {
-	case req.Body == "":
-		fields["body"] = "empty"
-	case !utf8.ValidString(req.Body):
-		fields["body"] = "invalid"
-	case utf8.RuneCountInString(req.Body) > maxMessageLen:
-		fields["body"] = "too_long"
+	if req.ReplyToID != "" && !uuidRe.MatchString(req.ReplyToID) {
+		fields["reply_to_id"] = "invalid"
+	}
+	if p := validateBody(req.Body); p != "" {
+		fields["body"] = p
 	}
 	if len(fields) > 0 {
 		writeValidation(w, fields)
@@ -247,9 +266,13 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, created, err := s.store.InsertMessage(r.Context(), chatID, me, req.ClientID, req.Body)
+	msg, created, err := s.store.InsertMessage(r.Context(), chatID, me, req.ClientID, req.Body, req.ReplyToID)
 	if errors.Is(err, store.ErrClientIDConflict) {
 		writeError(w, http.StatusConflict, "client_id_conflict", "client_id already used")
+		return
+	}
+	if errors.Is(err, store.ErrReplyNotFound) {
+		writeValidation(w, map[string]string{"reply_to_id": "not_found"})
 		return
 	}
 	if err != nil {
@@ -264,6 +287,80 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	s.broadcastToChat(r.Context(), chatID, messageEvent{Type: "message.new", ChatID: chatID, Message: msg})
 	writeJSON(w, http.StatusCreated, msg)
+}
+
+func (s *Server) messageIDParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := strings.ToLower(chi.URLParam(r, "messageID"))
+	if !uuidRe.MatchString(id) {
+		writeError(w, http.StatusNotFound, "message_not_found", "message not found")
+		return "", false
+	}
+	return id, true
+}
+
+func (s *Server) writeChangeError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "message_not_found", "message not found")
+	case errors.Is(err, store.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "not allowed to change this message")
+	case errors.Is(err, store.ErrMessageDeleted):
+		writeError(w, http.StatusConflict, "message_deleted", "message was deleted")
+	default:
+		s.internalError(w, r, err)
+	}
+}
+
+func (s *Server) handleEditMessage(w http.ResponseWriter, r *http.Request) {
+	me := claimsFrom(r.Context()).Subject
+	chatID := chatIDFrom(r.Context())
+	messageID, ok := s.messageIDParam(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Body string `json:"body"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.Body = strings.TrimSpace(req.Body)
+	if p := validateBody(req.Body); p != "" {
+		writeValidation(w, map[string]string{"body": p})
+		return
+	}
+	if !s.allow(w, r, "send:"+me, 30, 10*time.Second) {
+		return
+	}
+
+	msg, changed, err := s.store.EditMessage(r.Context(), chatID, messageID, me, req.Body)
+	if err != nil {
+		s.writeChangeError(w, r, err)
+		return
+	}
+	if changed {
+		s.broadcastToChat(r.Context(), chatID, messageEvent{Type: "message.updated", ChatID: chatID, Message: msg})
+	}
+	writeJSON(w, http.StatusOK, msg)
+}
+
+func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
+	me := claimsFrom(r.Context()).Subject
+	chatID := chatIDFrom(r.Context())
+	messageID, ok := s.messageIDParam(w, r)
+	if !ok {
+		return
+	}
+
+	msg, changed, err := s.store.DeleteMessage(r.Context(), chatID, messageID, me, false)
+	if err != nil {
+		s.writeChangeError(w, r, err)
+		return
+	}
+	if changed {
+		s.broadcastToChat(r.Context(), chatID, messageEvent{Type: "message.updated", ChatID: chatID, Message: msg})
+	}
+	writeJSON(w, http.StatusOK, msg)
 }
 
 func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
