@@ -56,21 +56,26 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Resolve modules
         run: eval "$GO_MODULES_SCRIPT"
-      - name: Start MinIO
+      - name: Start S3 storage
         run: |
           errors=""
-          for image in quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z minio/minio:RELEASE.2025-04-22T22-12-26Z quay.io/minio/minio:latest minio/minio:latest; do
-            docker rm -f minio >/dev/null 2>&1 || true
-            if out=$(docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=connecta -e MINIO_ROOT_PASSWORD=connecta-secret "$image" server /data 2>&1); then
-              for i in $(seq 1 60); do
-                if curl -sf http://localhost:9000/minio/health/live >/dev/null; then echo "::notice title=minio::started $image"; exit 0; fi
+          start() {
+            docker rm -f s3 >/dev/null 2>&1 || true
+            if out=$(docker run -d --name s3 "$@" 2>&1); then
+              for i in $(seq 1 90); do
+                code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9000/ || true)
+                if [ "$code" != "000" ]; then echo "::notice title=s3::started $* (HTTP $code)"; return 0; fi
                 sleep 1
               done
-              out="$(docker logs minio 2>&1 | tail -20)"
+              out="$(docker logs s3 2>&1 | tail -15)"
             fi
-            errors="$errors $image: $(echo "$out" | tr '\n' ' ' | cut -c1-300) |"
-          done
-          echo "::error title=minio::$errors"
+            errors="$errors $*: $(echo "$out" | tr '\n' ' ' | cut -c1-250) |"
+            return 1
+          }
+          start -p 9000:8333 chrislusf/seaweedfs:latest server -s3 -s3.port=8333 -ip.bind=0.0.0.0 && exit 0
+          start -p 9000:9000 -e RUSTFS_ACCESS_KEY=connecta -e RUSTFS_SECRET_KEY=connecta-secret rustfs/rustfs:latest && exit 0
+          start -p 9000:9090 adobe/s3mock:latest && exit 0
+          echo "::error title=s3::$errors"
           exit 1
       - name: Vet
         run: go vet ./...
@@ -151,21 +156,26 @@ jobs:
         working-directory: e2e
       - run: npx playwright install --with-deps chromium
         working-directory: e2e
-      - name: Start MinIO
+      - name: Start S3 storage
         run: |
           errors=""
-          for image in quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z minio/minio:RELEASE.2025-04-22T22-12-26Z quay.io/minio/minio:latest minio/minio:latest; do
-            docker rm -f minio >/dev/null 2>&1 || true
-            if out=$(docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=connecta -e MINIO_ROOT_PASSWORD=connecta-secret "$image" server /data 2>&1); then
-              for i in $(seq 1 60); do
-                if curl -sf http://localhost:9000/minio/health/live >/dev/null; then echo "::notice title=minio::started $image"; exit 0; fi
+          start() {
+            docker rm -f s3 >/dev/null 2>&1 || true
+            if out=$(docker run -d --name s3 "$@" 2>&1); then
+              for i in $(seq 1 90); do
+                code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9000/ || true)
+                if [ "$code" != "000" ]; then echo "::notice title=s3::started $* (HTTP $code)"; return 0; fi
                 sleep 1
               done
-              out="$(docker logs minio 2>&1 | tail -20)"
+              out="$(docker logs s3 2>&1 | tail -15)"
             fi
-            errors="$errors $image: $(echo "$out" | tr '\n' ' ' | cut -c1-300) |"
-          done
-          echo "::error title=minio::$errors"
+            errors="$errors $*: $(echo "$out" | tr '\n' ' ' | cut -c1-250) |"
+            return 1
+          }
+          start -p 9000:8333 chrislusf/seaweedfs:latest server -s3 -s3.port=8333 -ip.bind=0.0.0.0 && exit 0
+          start -p 9000:9000 -e RUSTFS_ACCESS_KEY=connecta -e RUSTFS_SECRET_KEY=connecta-secret rustfs/rustfs:latest && exit 0
+          start -p 9000:9090 adobe/s3mock:latest && exit 0
+          echo "::error title=s3::$errors"
           exit 1
       - name: Run Playwright
         working-directory: e2e

@@ -30,22 +30,15 @@ services:
       timeout: 3s
       retries: 20
 
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+  s3:
+    image: chrislusf/seaweedfs:latest
     restart: unless-stopped
-    command: ["server", "/data"]
-    environment:
-      MINIO_ROOT_USER: connecta
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+    command: ["server", "-s3", "-s3.port=8333", "-s3.config=/etc/seaweedfs/s3.json", "-dir=/data", "-ip.bind=0.0.0.0"]
     volumes:
-      - miniodata:/data
+      - s3data:/data
+      - ./deploy/s3.json:/etc/seaweedfs/s3.json:ro
     ports:
-      - "127.0.0.1:9000:9000"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      - "127.0.0.1:9000:8333"
 
   backend:
     build: ./backend
@@ -58,7 +51,7 @@ services:
       REFRESH_TTL: ${REFRESH_TTL:-720h}
       COOKIE_SECURE: "true"
       TRUST_PROXY: "true"
-      S3_ENDPOINT: minio:9000
+      S3_ENDPOINT: s3:8333
       S3_ACCESS_KEY: connecta
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: connecta
@@ -67,8 +60,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      s3:
+        condition: service_started
 
   web:
     build: ./web
@@ -86,7 +79,7 @@ services:
       - backend
 
 volumes:
-  miniodata:
+  s3data:
   pgdata:
   redisdata:
   caddydata:
