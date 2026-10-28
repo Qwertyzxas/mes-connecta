@@ -14,11 +14,19 @@
 
 ## Быстрый старт (всё в Docker)
 
+Нужны Git и запущенный Docker Desktop.
+
 ```bash
-make up
+git clone https://github.com/Qwertyzxas/mes-connecta.git
+cd mes-connecta
+./scripts/start.sh            # macOS / Linux
+# powershell -ExecutionPolicy Bypass -File scripts\start.ps1   # Windows
 ```
 
-Создаст `.env` со случайными секретами и поднимет Postgres, Redis, SeaweedFS (S3), LiveKit, бэкенд и Caddy.
+Первый запуск собирает образы 5–10 минут. Затем откройте https://localhost: браузер предупредит о локальном сертификате, это нормально — нажмите «Дополнительно» → «Перейти».
+Чтобы проверить переписку и звонки вдвоём, откройте второе окно в режиме инкогнито и зарегистрируйте второго пользователя.
+
+Через make то же самое: `make up`. Скрипт и `make up` создают `.env` со случайными секретами и поднимают Postgres, Redis, SeaweedFS (S3), LiveKit, бэкенд и Caddy.
 Откройте https://localhost (Caddy выдаст локальный сертификат). Для продакшна укажите `DOMAIN` в `.env`, и Caddy сам получит сертификат Let's Encrypt.
 
 Для звонков на сервере должны быть открыты порты `7881/tcp` и `50000-50100/udp` (медиатрафик LiveKit). Сигнализация идёт через Caddy по пути `/livekit`.
