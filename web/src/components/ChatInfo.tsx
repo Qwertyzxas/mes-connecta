@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Avatar } from './Avatar'
@@ -61,10 +61,19 @@ function MuteSection({ chat }: { chat: Chat }) {
       void qc.invalidateQueries({ queryKey: chatsKey })
     },
   })
+  const [checked, setChecked] = useState(chat.muted)
+  useEffect(() => setChecked(chat.muted), [chat.muted])
   return (
     <section className="info__section">
       <label className="switch">
-        <input type="checkbox" checked={chat.muted} onChange={(e) => toggle.mutate(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => {
+            setChecked(e.target.checked)
+            toggle.mutate(e.target.checked)
+          }}
+        />
         <span>Без уведомлений</span>
       </label>
     </section>

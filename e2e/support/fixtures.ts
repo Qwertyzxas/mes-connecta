@@ -55,7 +55,7 @@ export const test = base.extend<Fixtures>({
         baseURL,
         locale: 'ru-RU',
         serviceWorkers: 'block',
-        permissions: ['microphone'],
+        permissions: ['microphone', 'notifications'],
         isMobile,
         viewport,
         extraHTTPHeaders: { 'X-Real-IP': randomIp() },
