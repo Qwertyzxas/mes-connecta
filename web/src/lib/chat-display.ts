@@ -50,6 +50,8 @@ export function systemText(message: Message, me: string): string {
       return `${actor} ${message.sender_id === me ? 'удалили' : 'удалил(а)'} ${target}`
     case 'left':
       return `${actor} ${message.sender_id === me ? 'вышли' : 'вышел(ла)'} из группы`
+    case 'call':
+      return callText(message, me)
     case 'renamed':
       return `${actor} ${message.sender_id === me ? 'переименовали' : 'переименовал(а)'} чат в «${meta.title ?? ''}»`
     default:
@@ -72,4 +74,23 @@ export function previewText(chat: Chat, message: Message, me: string): string {
   if (message.sender_id === me) return `Вы: ${body}`
   if (chat.kind === 'group') return `${message.sender.display_name}: ${body}`
   return body
+}
+
+export function callText(message: Message, me: string): string {
+  const meta = message.meta
+  const mine = message.sender_id === me
+  const kind = meta?.video ? 'Видеозвонок' : 'Звонок'
+  switch (meta?.status) {
+    case 'ended': {
+      const total = meta.duration_s ?? 0
+      const duration = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+      return `${mine ? 'Исходящий' : 'Входящий'} ${kind.toLowerCase()} · ${duration}`
+    }
+    case 'declined':
+      return mine ? `${kind} отклонён` : `Отклонённый ${kind.toLowerCase()}`
+    case 'missed':
+      return mine ? `Отменённый ${kind.toLowerCase()}` : `Пропущенный ${kind.toLowerCase()}`
+    default:
+      return kind
+  }
 }

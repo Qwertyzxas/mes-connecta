@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { refreshSession, setAccessToken, setUnauthorizedHandler } from '../lib/api'
 import { authApi } from '../lib/auth-api'
+import { resetCalls } from '../lib/calls'
 import { queryClient } from '../lib/query'
 import { realtime } from '../lib/realtime'
 import type { AuthResponse, User } from '../lib/types'
@@ -52,6 +53,7 @@ export const useAuth = create<AuthState>()((set, get) => ({
   },
 
   reset: () => {
+    resetCalls()
     realtime.stop()
     useMessages.getState().reset()
     setAccessToken(null)

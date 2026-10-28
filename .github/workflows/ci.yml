@@ -178,6 +178,35 @@ jobs:
           start -p 9000:9090 adobe/s3mock:latest && exit 0
           echo "::error title=s3::$errors"
           exit 1
+      - name: Start LiveKit
+        env:
+          LIVEKIT_CONFIG: |
+            port: 7880
+            rtc:
+              tcp_port: 7881
+              port_range_start: 50000
+              port_range_end: 50100
+              use_external_ip: false
+              node_ip: 127.0.0.1
+            room:
+              empty_timeout: 30
+              departure_timeout: 5
+          LIVEKIT_KEYS: "connecta: e2e-livekit-secret-e2e-livekit-secret"
+        run: |
+          errors=""
+          for image in livekit/livekit-server:v1.9.4 livekit/livekit-server:v1.9.0 livekit/livekit-server:v1.8.4 livekit/livekit-server:latest; do
+            docker rm -f livekit >/dev/null 2>&1 || true
+            if out=$(docker run -d --name livekit --network host -e LIVEKIT_CONFIG -e LIVEKIT_KEYS "$image" 2>&1); then
+              for i in $(seq 1 30); do
+                if curl -sf http://localhost:7880/ >/dev/null; then echo "::notice title=livekit::started $image"; exit 0; fi
+                sleep 1
+              done
+              out="$(docker logs livekit 2>&1 | tail -15)"
+            fi
+            errors="$errors $image: $(echo "$out" | tr '\n' ' ' | cut -c1-300) |"
+          done
+          echo "::error title=livekit::$errors"
+          exit 1
       - name: Run Playwright
         working-directory: e2e
         env:
@@ -186,6 +215,9 @@ jobs:
           S3_ENDPOINT: localhost:9000
           S3_ACCESS_KEY: connecta
           S3_SECRET_KEY: connecta-secret
+          LIVEKIT_URL: ws://localhost:7880
+          LIVEKIT_API_KEY: connecta
+          LIVEKIT_API_SECRET: e2e-livekit-secret-e2e-livekit-secret
         run: npx playwright test
       - name: Report E2E
         if: always() && hashFiles('e2e/results.json') != ''

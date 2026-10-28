@@ -13,6 +13,9 @@ const backendEnv = {
   S3_ACCESS_KEY: process.env.S3_ACCESS_KEY ?? 'connecta',
   S3_SECRET_KEY: process.env.S3_SECRET_KEY ?? 'connecta-secret',
   S3_BUCKET: 'connecta-e2e',
+  LIVEKIT_URL: process.env.LIVEKIT_URL ?? 'ws://localhost:7880',
+  LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY ?? 'connecta',
+  LIVEKIT_API_SECRET: process.env.LIVEKIT_API_SECRET ?? 'e2e-livekit-secret-e2e-livekit-secret',
 }
 
 export default defineConfig({
@@ -32,7 +35,7 @@ export default defineConfig({
     serviceWorkers: 'block',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    permissions: ['microphone', 'notifications'],
+    permissions: ['microphone', 'camera', 'notifications'],
     launchOptions: {
       args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
     },

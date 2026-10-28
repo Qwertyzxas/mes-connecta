@@ -15,9 +15,11 @@ import { Link, Navigate, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MessageAttachments, PendingAttachments } from '../components/Attachments'
 import { Avatar } from '../components/Avatar'
+import { PhoneIcon, VideoIcon } from '../components/CallLayer'
 import { ChatInfo } from '../components/ChatInfo'
 import { Ticks } from '../components/Sidebar'
 import { ApiError } from '../lib/api'
+import { startCall, useCall } from '../lib/calls'
 import { chatApi } from '../lib/chat-api'
 import { chatKey, chatsKey, markReadLocally } from '../lib/chat-cache'
 import { canManage, canPost, chatAvatarId, chatTitle, membersText, systemText } from '../lib/chat-display'
@@ -245,6 +247,7 @@ function Conversation({ chat }: { chat: Chat }) {
             {status}
           </p>
         </div>
+        {chat.kind !== 'channel' && <CallButtons chat={chat} />}
       </header>
 
       <div className="messages" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label="Сообщения">
@@ -326,7 +329,12 @@ function MessageList({ items, pending, me, chat, menuFor, setMenuFor }: ListProp
           return (
             <Fragment key={m.id}>
               {day(m.created_at)}
-              <div className="system-msg" data-seq={m.seq} role="status">
+              <div
+                className={`system-msg${m.meta?.action === 'call' ? ' system-msg--call' : ''}`}
+                data-seq={m.seq}
+                data-testid={m.meta?.action === 'call' ? 'call-message' : undefined}
+                role="status"
+              >
                 <span>{systemText(m, me)}</span>
               </div>
             </Fragment>
@@ -869,5 +877,31 @@ function Composer({ chatId, lastOwn, staged, setStaged, onStage, onSent }: Compo
         )}
       </div>
     </form>
+  )
+}
+
+function CallButtons({ chat }: { chat: Chat }) {
+  const busy = useCall((s) => s.phase !== 'idle')
+  return (
+    <div className="conversation__actions">
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Аудиозвонок"
+        disabled={busy}
+        onClick={() => void startCall(chat, false)}
+      >
+        <PhoneIcon />
+      </button>
+      <button
+        type="button"
+        className="icon-btn"
+        aria-label="Видеозвонок"
+        disabled={busy}
+        onClick={() => void startCall(chat, true)}
+      >
+        <VideoIcon />
+      </button>
+    </div>
   )
 }

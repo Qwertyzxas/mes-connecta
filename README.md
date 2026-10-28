@@ -1,6 +1,15 @@
 # Connecta
 
-Go + React (PWA). Этап 1: регистрация и вход по почте и паролю.
+Мессенджер на Go + React (PWA).
+
+Что уже есть:
+
+- регистрация и вход по почте и паролю, список сеансов с отзывом;
+- личные чаты, группы и каналы (публичные с @адресом и закрытые), роли владелец/админ/участник;
+- ответы, правка и удаление сообщений, статусы «доставлено/прочитано», «печатает», онлайн;
+- фото, файлы и голосовые сообщения (S3-хранилище, подписанные ссылки);
+- push-уведомления (Web Push, VAPID) и режим «без уведомлений» для чата;
+- аудио- и видеозвонки в личных чатах и группах (LiveKit, WebRTC).
 
 ## Быстрый старт (всё в Docker)
 
@@ -8,14 +17,16 @@ Go + React (PWA). Этап 1: регистрация и вход по почте
 make up
 ```
 
-Создаст `.env` со случайными секретами, сгенерирует `backend/go.sum` и поднимет Postgres, Redis, бэкенд и Caddy.
+Создаст `.env` со случайными секретами и поднимет Postgres, Redis, SeaweedFS (S3), LiveKit, бэкенд и Caddy.
 Откройте https://localhost (Caddy выдаст локальный сертификат). Для продакшна укажите `DOMAIN` в `.env`, и Caddy сам получит сертификат Let's Encrypt.
+
+Для звонков на сервере должны быть открыты порты `7881/tcp` и `50000-50100/udp` (медиатрафик LiveKit). Сигнализация идёт через Caddy по пути `/livekit`.
 
 ## Разработка
 
 ```bash
 make setup        # .env, go mod tidy, npm install
-make deps         # Postgres и Redis в Docker
+make deps         # Postgres, Redis, S3 и LiveKit в Docker
 make dev-backend  # API на :8080, миграции применяются при старте
 make dev-web      # Vite на http://localhost:5173 с прокси /api
 ```
@@ -23,7 +34,7 @@ make dev-web      # Vite на http://localhost:5173 с прокси /api
 ## Тесты
 
 ```bash
-make test-backend  # unit и интеграционные тесты API на реальных Postgres и Redis
+make test-backend  # unit и интеграционные тесты API на реальных Postgres, Redis и S3
 make test-e2e      # Playwright: десктоп и мобильный Chrome
 ```
 
@@ -31,18 +42,30 @@ make test-e2e      # Playwright: десктоп и мобильный Chrome
 
 ## API
 
-| Метод  | Путь                 | Авторизация    |
-|--------|----------------------|----------------|
-| POST   | /api/auth/register   | —              |
-| POST   | /api/auth/login      | —              |
-| POST   | /api/auth/refresh    | cookie         |
-| POST   | /api/auth/logout     | cookie         |
-| GET    | /api/me              | Bearer         |
-| GET    | /api/sessions        | Bearer         |
-| DELETE | /api/sessions/{id}   | Bearer         |
-| GET    | /api/health          | —              |
+Все пути под `/api`, кроме `auth/*`, `health`, `ws` и подписанных `files/{id}` требуют `Authorization: Bearer`.
+
+| Группа      | Пути |
+|-------------|------|
+| Авторизация | `POST auth/register`, `auth/login`, `auth/refresh`, `auth/logout`; `GET me`; `GET/DELETE sessions` |
+| Realtime    | `POST ws/ticket` → `GET ws?ticket=` |
+| Поиск       | `GET users/search`, `GET search`, `POST channels/{id}/join` |
+| Чаты        | `GET chats`; `POST chats/direct`, `chats/group`, `chats/channel`; `GET/PATCH chats/{id}`; `POST chats/{id}/leave`, `read`, `mute` |
+| Участники   | `GET/POST chats/{id}/members`; `PATCH/DELETE chats/{id}/members/{userId}` |
+| Сообщения   | `GET/POST chats/{id}/messages`; `PATCH/DELETE chats/{id}/messages/{messageId}` |
+| Файлы       | `POST chats/{id}/attachments`; `GET files/{id}`; `GET files/{id}/url` |
+| Push        | `GET push/key`; `POST/DELETE push/subscriptions` |
+| Звонки      | `POST chats/{id}/calls`; `GET calls`, `calls?live=1`; `POST calls/{id}/join`, `leave`, `decline` |
 
 Ошибки: `{"error": {"code": "...", "message": "...", "fields": {...}}}`.
+
+## Звонки
+
+- Медиасервер LiveKit (SFU). Бэкенд хранит звонки в Postgres и выдаёт участникам JWT-токены LiveKit на конкретную комнату.
+- Входящий звонок приходит событием `call.incoming` по WebSocket и push-уведомлением, если приложение закрыто.
+- В личном чате звонок заканчивается, когда уходит любой из двоих; в группе — когда уходит последний.
+- Без ответа 45 секунд звонок становится пропущенным. Раз в 10 секунд сервер сверяет участников с LiveKit и закрывает брошенные звонки.
+- Итог звонка (длительность, отклонён, пропущен) сохраняется служебным сообщением в чате.
+- Переменные: `LIVEKIT_URL` (адрес для браузера, можно путь `/livekit`), `LIVEKIT_API_URL` (внутренний адрес API LiveKit), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (не короче 32 байт). Без `LIVEKIT_URL` звонки отключены.
 
 ## Как устроена авторизация
 

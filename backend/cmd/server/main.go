@@ -15,6 +15,7 @@ import (
 
 	"connecta/internal/api"
 	"connecta/internal/auth"
+	"connecta/internal/calls"
 	"connecta/internal/config"
 	"connecta/internal/files"
 	"connecta/internal/push"
@@ -92,8 +93,13 @@ func run(log *slog.Logger) error {
 		hub,
 		storage,
 		pusher,
+		calls.New(calls.Config{
+			URL: cfg.LiveKitURL, APIURL: cfg.LiveKitAPIURL,
+			APIKey: cfg.LiveKitAPIKey, APISecret: cfg.LiveKitAPISecret,
+		}),
 		log,
 	)
+	go srv.RunCallJanitor(ctx)
 
 	httpServer := &http.Server{
 		Addr:              cfg.HTTPAddr,

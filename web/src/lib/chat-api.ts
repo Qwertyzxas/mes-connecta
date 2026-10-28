@@ -1,5 +1,14 @@
 import { api, json } from './api'
-import type { Chat, Member, Message, PublicUser, Role, SearchResult } from './types'
+import type { Call, CallEntry, CallSession, Chat, Member, Message, PublicUser, Role, SearchResult } from './types'
+
+export const callApi = {
+  start: (chatId: string, video: boolean) => api<CallSession>(`/chats/${chatId}/calls`, json({ video })),
+  join: (callId: string) => api<CallSession>(`/calls/${callId}/join`, { method: 'POST' }),
+  leave: (callId: string) => api<Call>(`/calls/${callId}/leave`, { method: 'POST' }),
+  decline: (callId: string) => api<Call>(`/calls/${callId}/decline`, { method: 'POST' }),
+  live: () => api<Call[]>('/calls?live=1'),
+  history: () => api<CallEntry[]>('/calls'),
+}
 
 export const chatApi = {
   searchUsers: (q: string) => api<PublicUser[]>(`/users/search?q=${encodeURIComponent(q)}`),

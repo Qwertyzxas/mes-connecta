@@ -21,6 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"connecta/internal/auth"
+	"connecta/internal/calls"
 	"connecta/internal/config"
 	"connecta/internal/files"
 	"connecta/internal/push"
@@ -42,6 +43,7 @@ type env struct {
 	srv *Server
 	ts  *httptest.Server
 	rdb *redis.Client
+	lk  *fakeLiveKit
 }
 
 func setup(t *testing.T) *env {
@@ -111,12 +113,15 @@ func setup(t *testing.T) *env {
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
+	lk := newFakeLiveKit(t)
 	srv := New(cfg, st, auth.NewTokens(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTL),
-		ratelimit.New(rdb), rdb, hub, storage, pusher, log)
+		ratelimit.New(rdb), rdb, hub, storage, pusher, calls.New(calls.Config{
+			URL: "ws" + strings.TrimPrefix(lk.URL, "http"), APIKey: fakeLiveKitKey, APISecret: fakeLiveKitSecret,
+		}), log)
 
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)
-	return &env{srv: srv, ts: ts, rdb: rdb}
+	return &env{srv: srv, ts: ts, rdb: rdb, lk: lk}
 }
 
 type client struct {
