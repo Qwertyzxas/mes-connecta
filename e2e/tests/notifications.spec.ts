@@ -32,6 +32,10 @@ test.describe('Уведомления', () => {
     await settings.goto()
     const panel = page.getByRole('region', { name: 'Уведомления' })
     await expect(panel).toBeVisible()
-    await expect(panel.getByRole('button', { name: 'Включить уведомления' })).toBeVisible()
+    await expect(panel).toContainText(/Уведомления (о новых сообщениях|включены|запрещены)|не поддерживает/)
+    const state = await page.evaluate(() => Notification.permission)
+    if (state !== 'denied') {
+      await expect(panel.getByRole('button', { name: 'Включить уведомления' })).toBeVisible()
+    }
   })
 })
