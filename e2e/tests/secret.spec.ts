@@ -61,17 +61,17 @@ test.describe('Секретные чаты', () => {
     await expect(alice.ui.bubble('Совершенно секретно').getByLabel('Прочитано')).toBeVisible()
     await expect(bob.ui.secretRow('Алиса')).toContainText('Совершенно секретно')
 
-    await bob.ui.messageAction('Совершенно секретно', 'Ответить')
-    await bob.ui.send('Принято')
-    await expect(alice.ui.bubble('Принято').locator('.quote')).toContainText('Совершенно секретно')
-
     await alice.ui.messageAction('Совершенно секретно', 'Изменить')
     await alice.ui.composer.fill('Совсем секретно')
     await alice.ui.composer.press('Enter')
     await expect(bob.ui.bubble('Совсем секретно')).toContainText('изменено')
 
+    await bob.ui.messageAction('Совсем секретно', 'Ответить')
+    await bob.ui.send('Принято')
+    await expect(alice.ui.bubble('Принято').locator('.quote')).toContainText('Совсем секретно')
+
     await bob.page.reload()
-    await expect(bob.ui.bubble('Совсем секретно')).toBeVisible()
+    await expect(bob.ui.bubble('Совсем секретно').first()).toBeVisible()
     await expect(bob.ui.bubble('Принято').locator('.quote')).toContainText('Совсем секретно')
 
     await alice.ui.openInfo()
@@ -143,7 +143,7 @@ test.describe('Секретные чаты', () => {
 
   test('выход из аккаунта уничтожает секретный чат', async ({ page, openDevice }) => {
     const [alice, bob] = await accepted(page, openDevice)
-    await expect(alice.ui.secretRow('Боб')).toBeVisible()
+    await expect(alice.ui.secretRow('Боб')).toHaveCount(1)
 
     const settings = new SettingsPage(bob.page)
     await bob.page.goto('/settings')

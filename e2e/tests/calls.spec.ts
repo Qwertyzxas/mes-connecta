@@ -56,6 +56,13 @@ test.describe('Звонки', () => {
     await expect(alice.call.messages.last()).toHaveText(/^Исходящий звонок · \d+:\d{2}$/)
     await expect(bob.call.messages.last()).toHaveText(/^Входящий звонок · \d+:\d{2}$/)
     await expect(alice.call.audioCall).toBeEnabled()
+
+    await alice.page.goto('/calls')
+    const entry = alice.page.getByTestId('call-entry').first()
+    await expect(entry).toContainText('Боб')
+    await expect(entry).toContainText(/Исходящий звонок · \d+:\d{2}/)
+    await bob.page.goto('/calls')
+    await expect(bob.page.getByTestId('call-entry').first()).toContainText(/Входящий звонок/)
   })
 
   test('видеозвонок передаёт камеру собеседнику', async ({ page, openDevice }) => {

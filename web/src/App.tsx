@@ -5,7 +5,6 @@ import { ChatPage } from './pages/ChatPage'
 import { ChatsLayout, NoChatSelected } from './pages/ChatsLayout'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
-import { SettingsPage } from './pages/SettingsPage'
 import { useAuth } from './store/auth'
 
 function RequireAuth() {
@@ -68,8 +67,10 @@ export function App() {
           <Route element={<ChatsLayout />}>
             <Route index element={<NoChatSelected />} />
             <Route path="/chat/:chatId" element={<ChatPage />} />
+            <Route path="/calls" element={<NoChatSelected />} />
+            <Route path="/contacts" element={<NoChatSelected />} />
+            <Route path="/settings" element={<NoChatSelected />} />
           </Route>
-          <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

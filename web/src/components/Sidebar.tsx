@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, NavLink, useNavigate } from 'react-router'
+import { NavLink, useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Avatar } from './Avatar'
 import { LockIcon } from './LockIcon'
@@ -20,7 +20,6 @@ import { useMessages } from '../store/messages'
 const searchRe = /^[a-z0-9_]{1,32}$/
 
 export function Sidebar() {
-  const user = useAuth((s) => s.user)
   const status = useConnection((s) => s.status)
   const [query, setQuery] = useState('')
   const [dialog, setDialog] = useState<'group' | 'channel' | 'secret' | null>(null)
@@ -28,16 +27,13 @@ export function Sidebar() {
   const searching = query.trim().length > 0
 
   return (
-    <aside className="sidebar">
-      <header className="sidebar__head">
-        <Logo size={32} />
+    <div className="panel-view">
+      <header className="panel-view__head">
+        <div className="panel-view__brand">
+          <Logo size={30} />
+        </div>
         <div className="sidebar__actions">
           <NewMenu onPick={setDialog} />
-          {user && (
-            <Link to="/settings" className="sidebar__me" aria-label="Настройки">
-              <Avatar id={user.id} name={user.display_name} size={36} />
-            </Link>
-          )}
         </div>
       </header>
 
@@ -61,12 +57,19 @@ export function Sidebar() {
         </p>
       ) : null}
 
-      {searching ? <SearchResults query={normalized} onDone={() => setQuery('')} /> : <ChatList />}
+      {searching ? (
+        <SearchResults query={normalized} onDone={() => setQuery('')} />
+      ) : (
+        <>
+          <Favorites />
+          <ChatList />
+        </>
+      )}
 
       {dialog === 'group' && <NewGroupDialog onClose={() => setDialog(null)} />}
       {dialog === 'channel' && <NewChannelDialog onClose={() => setDialog(null)} />}
       {dialog === 'secret' && <NewSecretDialog onClose={() => setDialog(null)} />}
-    </aside>
+    </div>
   )
 }
 
@@ -201,6 +204,26 @@ function SearchResults({ query, onDone }: { query: string; onDone: () => void })
         </>
       )}
     </div>
+  )
+}
+
+function Favorites() {
+  const chats = useQuery({ queryKey: chatsKey, queryFn: chatApi.list })
+  const people = (chats.data ?? []).filter((c) => c.kind === 'direct' && c.peer && c.last_seq > 0).slice(0, 12)
+  if (people.length < 2) return null
+  return (
+    <ul className="favorites" aria-label="Избранные">
+      {people.map((chat) => (
+        <li key={chat.id}>
+          <NavLink to={`/chat/${chat.id}`} className="favorites__item" aria-label={chat.peer!.display_name}>
+            <span className="favorites__ring">
+              <Avatar id={chat.peer!.id} name={chat.peer!.display_name} size={56} online={chat.peer!.online} />
+            </span>
+            <span className="favorites__name">{chat.peer!.display_name.split(/\s+/)[0]}</span>
+          </NavLink>
+        </li>
+      ))}
+    </ul>
   )
 }
 
