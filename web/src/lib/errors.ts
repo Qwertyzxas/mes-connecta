@@ -7,6 +7,11 @@ const codeMessages: Record<string, string> = {
   rate_limited: 'Слишком много попыток. Подождите немного и попробуйте снова',
   session_expired: 'Сеанс истёк, войдите заново',
   validation_failed: 'Проверьте поля формы',
+  handle_taken: 'Этот адрес уже занят',
+  forbidden: 'Недостаточно прав',
+  read_only: 'В канале публикуют только администраторы',
+  message_deleted: 'Сообщение уже удалено',
+  too_many_members: 'В группе слишком много участников',
 }
 
 const fieldMessages: Record<string, string> = {
@@ -15,11 +20,16 @@ const fieldMessages: Record<string, string> = {
   'display_name:too_long': 'Не длиннее 64 символов',
   'password:too_short': 'Минимум 8 символов',
   'password:too_long': 'Не длиннее 128 символов',
+  'title:empty': 'Введите название',
+  'title:too_long': 'Не длиннее 64 символов',
+  'about:too_long': 'Не длиннее 255 символов',
+  'handle:invalid': '5–32 символа: латиница, цифры и _, начинается с буквы',
 }
 
 const fieldByCode: Record<string, string> = {
   email_taken: 'email',
   username_taken: 'username',
+  handle_taken: 'handle',
 }
 
 export type FormError = {

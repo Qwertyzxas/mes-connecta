@@ -110,12 +110,23 @@ export function handleServerEvent(qc: QueryClient, me: string, event: ServerEven
         )
       }
       break
+    case 'chat.updated':
+      void qc.invalidateQueries({ queryKey: chatsKey })
+      void qc.invalidateQueries({ queryKey: chatKey(event.chat_id) })
+      void qc.invalidateQueries({ queryKey: ['members', event.chat_id] })
+      break
+    case 'chat.removed':
+      qc.setQueryData<Chat[]>(chatsKey, (list) => list?.filter((c) => c.id !== event.chat_id))
+      qc.removeQueries({ queryKey: chatKey(event.chat_id) })
+      qc.removeQueries({ queryKey: ['members', event.chat_id] })
+      store.forget(event.chat_id)
+      break
     case 'typing':
       if (event.user_id !== me) store.setTyping(event.chat_id, event.user_id)
       break
     case 'presence': {
       const patch = (chat: Chat) =>
-        chat.peer.id === event.user_id
+        chat.peer && chat.peer.id === event.user_id
           ? { ...chat, peer: { ...chat.peer, online: event.online, last_seen_at: event.last_seen_at ?? chat.peer.last_seen_at } }
           : chat
       qc.setQueryData<Chat[]>(chatsKey, (list) => list?.map(patch))

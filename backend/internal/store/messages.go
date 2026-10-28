@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 	"unicode/utf8"
 
@@ -35,18 +38,20 @@ type ReplyPreview struct {
 }
 
 type Message struct {
-	ID        string        `json:"id"`
-	ChatID    string        `json:"chat_id"`
-	Seq       int64         `json:"seq"`
-	Rev       int64         `json:"rev"`
-	SenderID  string        `json:"sender_id"`
-	Sender    Sender        `json:"sender"`
-	ClientID  string        `json:"client_id"`
-	Body      string        `json:"body"`
-	ReplyTo   *ReplyPreview `json:"reply_to"`
-	CreatedAt time.Time     `json:"created_at"`
-	EditedAt  *time.Time    `json:"edited_at"`
-	DeletedAt *time.Time    `json:"deleted_at"`
+	ID        string          `json:"id"`
+	ChatID    string          `json:"chat_id"`
+	Seq       int64           `json:"seq"`
+	Rev       int64           `json:"rev"`
+	Kind      string          `json:"kind"`
+	Meta      json.RawMessage `json:"meta,omitempty"`
+	SenderID  string          `json:"sender_id"`
+	Sender    Sender          `json:"sender"`
+	ClientID  string          `json:"client_id"`
+	Body      string          `json:"body"`
+	ReplyTo   *ReplyPreview   `json:"reply_to"`
+	CreatedAt time.Time       `json:"created_at"`
+	EditedAt  *time.Time      `json:"edited_at"`
+	DeletedAt *time.Time      `json:"deleted_at"`
 }
 
 type MessageQuery struct {
@@ -61,7 +66,7 @@ type querier interface {
 }
 
 const messageSelect = `
-	SELECT m.id::text, m.conversation_id::text, m.seq, m.rev, m.sender_id::text,
+	SELECT m.id::text, m.conversation_id::text, m.seq, m.rev, m.kind, m.meta, m.sender_id::text,
 	       su.username, su.display_name, m.client_id::text, m.body,
 	       m.created_at, m.edited_at, m.deleted_at,
 	       r.id::text, r.seq, r.sender_id::text, ru.display_name, r.body, r.deleted_at
@@ -79,9 +84,10 @@ func scanMessage(row scanner) (Message, error) {
 		replyName   *string
 		replyBody   *string
 		replyDel    *time.Time
+		meta        []byte
 	)
 	err := row.Scan(
-		&m.ID, &m.ChatID, &m.Seq, &m.Rev, &m.SenderID,
+		&m.ID, &m.ChatID, &m.Seq, &m.Rev, &m.Kind, &meta, &m.SenderID,
 		&m.Sender.Username, &m.Sender.DisplayName, &m.ClientID, &m.Body,
 		&m.CreatedAt, &m.EditedAt, &m.DeletedAt,
 		&replyID, &replySeq, &replySender, &replyName, &replyBody, &replyDel,
@@ -93,6 +99,9 @@ func scanMessage(row scanner) (Message, error) {
 		return Message{}, err
 	}
 	m.Sender.ID = m.SenderID
+	if len(meta) > 0 {
+		m.Meta = json.RawMessage(meta)
+	}
 	if replyID != nil {
 		m.ReplyTo = &ReplyPreview{
 			ID:         *replyID,
@@ -161,19 +170,59 @@ func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	msg, err := insertIn(ctx, tx, newMessage{
+		ChatID: chatID, SenderID: senderID, ClientID: clientID, Kind: "text", Body: body, ReplyToID: replyToID,
+	})
+	if err != nil {
+		return Message{}, err
+	}
+	return msg, tx.Commit(ctx)
+}
+
+type newMessage struct {
+	ChatID    string
+	SenderID  string
+	ClientID  string
+	Kind      string
+	Body      string
+	ReplyToID string
+	Meta      any
+}
+
+func newUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+func insertIn(ctx context.Context, tx pgx.Tx, nm newMessage) (Message, error) {
 	var replyTo *string
-	if replyToID != "" {
+	if nm.ReplyToID != "" {
 		var ok bool
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS (SELECT 1 FROM messages WHERE id = $1::uuid AND conversation_id = $2::uuid)`,
-			replyToID, chatID,
+			nm.ReplyToID, nm.ChatID,
 		).Scan(&ok); err != nil {
 			return Message{}, err
 		}
 		if !ok {
 			return Message{}, ErrReplyNotFound
 		}
-		replyTo = &replyToID
+		replyTo = &nm.ReplyToID
+	}
+
+	var meta []byte
+	if nm.Meta != nil {
+		b, err := json.Marshal(nm.Meta)
+		if err != nil {
+			return Message{}, err
+		}
+		meta = b
+	}
+	if nm.ClientID == "" {
+		nm.ClientID = newUUID()
 	}
 
 	var seq, rev int64
@@ -182,7 +231,7 @@ func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID,
 		SET last_seq = last_seq + 1, last_rev = last_rev + 1, last_message_at = now()
 		WHERE id = $1::uuid
 		RETURNING last_seq, last_rev`,
-		chatID,
+		nm.ChatID,
 	).Scan(&seq, &rev); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Message{}, ErrNotFound
@@ -192,27 +241,23 @@ func (s *Store) insertMessageTx(ctx context.Context, chatID, senderID, clientID,
 
 	var id string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO messages (conversation_id, seq, rev, sender_id, client_id, body, reply_to_id)
-		VALUES ($1::uuid, $2, $3, $4::uuid, $5::uuid, $6, $7::uuid)
+		INSERT INTO messages (conversation_id, seq, rev, kind, meta, sender_id, client_id, body, reply_to_id)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6::uuid, $7::uuid, $8, $9::uuid)
 		RETURNING id::text`,
-		chatID, seq, rev, senderID, clientID, body, replyTo,
+		nm.ChatID, seq, rev, nm.Kind, meta, nm.SenderID, nm.ClientID, nm.Body, replyTo,
 	).Scan(&id); err != nil {
 		return Message{}, err
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE conversation_members SET last_read_seq = $3
-		WHERE conversation_id = $1::uuid AND user_id = $2::uuid`,
-		chatID, senderID, seq,
+		WHERE conversation_id = $1::uuid AND user_id = $2::uuid AND last_read_seq < $3`,
+		nm.ChatID, nm.SenderID, seq,
 	); err != nil {
 		return Message{}, err
 	}
 
-	msg, err := messageByID(ctx, tx, id)
-	if err != nil {
-		return Message{}, err
-	}
-	return msg, tx.Commit(ctx)
+	return messageByID(ctx, tx, id)
 }
 
 func (s *Store) messageByClientID(ctx context.Context, senderID, clientID string) (Message, error) {
@@ -233,20 +278,24 @@ func (s *Store) changeMessage(ctx context.Context, chatID, messageID string, aut
 
 	var (
 		senderID  string
+		kind      string
 		body      string
 		deletedAt *time.Time
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT sender_id::text, body, deleted_at FROM messages
+		SELECT sender_id::text, kind, body, deleted_at FROM messages
 		WHERE id = $1::uuid AND conversation_id = $2::uuid
 		FOR UPDATE`,
 		messageID, chatID,
-	).Scan(&senderID, &body, &deletedAt)
+	).Scan(&senderID, &kind, &body, &deletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, false, ErrNotFound
 	}
 	if err != nil {
 		return Message{}, false, err
+	}
+	if kind != "text" {
+		return Message{}, false, ErrForbidden
 	}
 	if err := authorize(senderID, body, deletedAt != nil); err != nil {
 		if errors.Is(err, errUnchanged) {

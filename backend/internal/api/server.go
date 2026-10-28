@@ -80,13 +80,23 @@ func (s *Server) Routes() http.Handler {
 
 			r.Post("/ws/ticket", s.handleWSTicket)
 			r.Get("/users/search", s.handleSearchUsers)
+			r.Get("/search", s.handleSearch)
+			r.Post("/channels/{chatID}/join", s.handleJoin)
 
 			r.Route("/chats", func(r chi.Router) {
 				r.Get("/", s.handleListChats)
 				r.Post("/direct", s.handleOpenDirect)
+				r.Post("/group", s.handleCreateGroup)
+				r.Post("/channel", s.handleCreateChannel)
 				r.Route("/{chatID}", func(r chi.Router) {
 					r.Use(s.requireMember)
 					r.Get("/", s.handleGetChat)
+					r.Patch("/", s.handleUpdateChat)
+					r.Post("/leave", s.handleLeave)
+					r.Get("/members", s.handleMembers)
+					r.Post("/members", s.handleAddMembers)
+					r.Patch("/members/{userID}", s.handleSetRole)
+					r.Delete("/members/{userID}", s.handleRemoveMember)
 					r.Get("/messages", s.handleListMessages)
 					r.Post("/messages", s.handleSendMessage)
 					r.Patch("/messages/{messageID}", s.handleEditMessage)

@@ -26,6 +26,8 @@ var searchRe = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 
 type chatKey struct{}
 
+type membershipKey struct{}
+
 type messageEvent struct {
 	Type    string        `json:"type"`
 	ChatID  string        `json:"chat_id"`
@@ -46,7 +48,7 @@ func (s *Server) requireMember(next http.Handler) http.Handler {
 			writeError(w, http.StatusNotFound, "chat_not_found", "chat not found")
 			return
 		}
-		ok, err := s.store.IsMember(r.Context(), chatID, claimsFrom(r.Context()).Subject)
+		m, ok, err := s.store.Membership(r.Context(), chatID, claimsFrom(r.Context()).Subject)
 		if err != nil {
 			s.internalError(w, r, err)
 			return
@@ -55,7 +57,9 @@ func (s *Server) requireMember(next http.Handler) http.Handler {
 			writeError(w, http.StatusNotFound, "chat_not_found", "chat not found")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), chatKey{}, chatID)))
+		ctx := context.WithValue(r.Context(), chatKey{}, chatID)
+		ctx = context.WithValue(ctx, membershipKey{}, m)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -137,18 +141,11 @@ func (s *Server) handleOpenDirect(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	chat, err := s.store.GetChat(r.Context(), me, chatID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	s.withPresence(r.Context(), []*store.PublicUser{&chat.Peer})
-
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, chat)
+	s.respondChat(w, r, me, chatID, status)
 }
 
 func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
@@ -158,9 +155,11 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	peers := make([]*store.PublicUser, len(chats))
+	peers := make([]*store.PublicUser, 0, len(chats))
 	for i := range chats {
-		peers[i] = &chats[i].Peer
+		if chats[i].Peer != nil {
+			peers = append(peers, chats[i].Peer)
+		}
 	}
 	s.withPresence(r.Context(), peers)
 	writeJSON(w, http.StatusOK, chats)
@@ -176,7 +175,7 @@ func (s *Server) handleGetChat(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	s.withPresence(r.Context(), []*store.PublicUser{&chat.Peer})
+	s.decorateChat(r.Context(), &chat)
 	writeJSON(w, http.StatusOK, chat)
 }
 
@@ -260,6 +259,10 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(fields) > 0 {
 		writeValidation(w, fields)
+		return
+	}
+	if !membershipFrom(r.Context()).CanPost() {
+		writeError(w, http.StatusForbidden, "read_only", "only admins can post in this channel")
 		return
 	}
 	if !s.allow(w, r, "send:"+me, 30, 10*time.Second) {
@@ -352,7 +355,7 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, changed, err := s.store.DeleteMessage(r.Context(), chatID, messageID, me, false)
+	msg, changed, err := s.store.DeleteMessage(r.Context(), chatID, messageID, me, membershipFrom(r.Context()).CanManage())
 	if err != nil {
 		s.writeChangeError(w, r, err)
 		return
