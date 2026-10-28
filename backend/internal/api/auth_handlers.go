@@ -187,7 +187,7 @@ func (s *Server) handleStaleRefresh(w http.ResponseWriter, r *http.Request, hash
 			"user_id", prev.UserID,
 			"ip", clientIP(r),
 		)
-		if err := s.revokeSession(r.Context(), prev.ID); err != nil {
+		if err := s.revokeSession(r.Context(), prev.UserID, prev.ID); err != nil {
 			s.internalError(w, r, err)
 			return
 		}
@@ -205,7 +205,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		sess, err := s.store.RevokeSessionByHash(r.Context(), auth.HashRefreshToken(cookie.Value))
 		switch {
 		case err == nil:
-			s.markRevoked(r.Context(), sess.ID)
+			s.markRevoked(r.Context(), sess.UserID, sess.ID)
 		case !errors.Is(err, store.ErrNotFound):
 			s.internalError(w, r, err)
 			return
@@ -261,16 +261,19 @@ func (s *Server) clearRefreshCookie(w http.ResponseWriter) {
 	})
 }
 
-func (s *Server) revokeSession(ctx context.Context, sessionID string) error {
+func (s *Server) revokeSession(ctx context.Context, userID, sessionID string) error {
 	if err := s.store.RevokeSession(ctx, sessionID); err != nil {
 		return err
 	}
-	s.markRevoked(ctx, sessionID)
+	s.markRevoked(ctx, userID, sessionID)
 	return nil
 }
 
-func (s *Server) markRevoked(ctx context.Context, sessionID string) {
+func (s *Server) markRevoked(ctx context.Context, userID, sessionID string) {
 	if err := s.rdb.Set(ctx, revokedKey(sessionID), 1, s.cfg.AccessTTL+time.Minute).Err(); err != nil {
 		s.log.Error("failed to mark session revoked", "session_id", sessionID, "err", err)
+	}
+	if err := s.hub.RevokeSession(ctx, userID, sessionID); err != nil {
+		s.log.Error("failed to close realtime connections", "session_id", sessionID, "err", err)
 	}
 }

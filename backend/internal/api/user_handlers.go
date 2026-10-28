@@ -60,7 +60,7 @@ func (s *Server) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.markRevoked(r.Context(), id)
+	s.markRevoked(r.Context(), claims.Subject, id)
 	if id == claims.SessionID {
 		s.clearRefreshCookie(w)
 	}

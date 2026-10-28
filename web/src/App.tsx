@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router'
-import { HomePage } from './pages/HomePage'
+import { ChatPage } from './pages/ChatPage'
+import { ChatsLayout, NoChatSelected } from './pages/ChatsLayout'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { useAuth } from './store/auth'
 
 function RequireAuth() {
@@ -41,7 +43,11 @@ export function App() {
           <Route path="/register" element={<RegisterPage />} />
         </Route>
         <Route element={<RequireAuth />}>
-          <Route path="/" element={<HomePage />} />
+          <Route element={<ChatsLayout />}>
+            <Route index element={<NoChatSelected />} />
+            <Route path="/chat/:chatId" element={<ChatPage />} />
+          </Route>
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

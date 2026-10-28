@@ -17,6 +17,7 @@ import (
 	"connecta/internal/auth"
 	"connecta/internal/config"
 	"connecta/internal/ratelimit"
+	"connecta/internal/realtime"
 	"connecta/internal/store"
 )
 
@@ -57,12 +58,19 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("redis: %w", err)
 	}
 
+	hub, err := realtime.NewHub(ctx, rdb, log)
+	if err != nil {
+		return fmt.Errorf("realtime hub: %w", err)
+	}
+	defer hub.Close()
+
 	srv := api.New(
 		cfg,
 		store.New(pool),
 		auth.NewTokens(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTL),
 		ratelimit.New(rdb),
 		rdb,
+		hub,
 		log,
 	)
 
