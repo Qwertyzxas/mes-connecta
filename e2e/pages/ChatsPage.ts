@@ -52,7 +52,7 @@ export class ChatsPage {
   }
 
   secretRow(displayName: string): Locator {
-    return this.chatRow(displayName).filter({ has: this.page.getByRole('img', { name: 'секретный чат' }) })
+    return this.chatRow(displayName).filter({ has: this.page.locator('.lock-icon') })
   }
 
   async createSecretChat(username: string) {

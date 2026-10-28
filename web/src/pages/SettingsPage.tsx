@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router'
 import { Avatar } from '../components/Avatar'
 import { Button } from '../components/Button'
 import { authApi } from '../lib/auth-api'
@@ -29,17 +28,15 @@ export function SettingsPage() {
   if (!user) return null
 
   return (
-    <div className="home">
-      <header className="home__bar">
-        <Link to="/" className="back-link">
-          ← К чатам
-        </Link>
+    <div className="panel-view settings">
+      <header className="panel-view__head">
+        <h2 className="panel-view__title">Настройки</h2>
         <Button variant="ghost" onClick={() => logout.mutate()} loading={logout.isPending}>
           Выйти
         </Button>
       </header>
 
-      <main className="home__content">
+      <div className="settings__content">
         <section className="profile">
           <Avatar id={user.id} name={user.display_name} size={56} />
           <div>
@@ -87,8 +84,7 @@ export function SettingsPage() {
             ))}
           </ul>
         </section>
-
-      </main>
+      </div>
     </div>
   )
 }
