@@ -236,15 +236,15 @@ func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn, client *rea
 				continue
 			}
 			tokens--
-			isMember, cached := members[msg.ChatID]
+			canType, cached := members[msg.ChatID]
 			if !cached {
-				ok, err := s.store.IsMember(ctx, msg.ChatID, client.UserID)
+				m, ok, err := s.store.Membership(ctx, msg.ChatID, client.UserID)
 				if err != nil {
 					continue
 				}
-				members[msg.ChatID], isMember = ok, ok
+				members[msg.ChatID], canType = ok && m.CanPost(), ok && m.CanPost()
 			}
-			if !isMember {
+			if !canType {
 				continue
 			}
 			ids, err := s.store.MemberIDs(ctx, msg.ChatID)

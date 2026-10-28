@@ -57,11 +57,20 @@ export type ReplyPreview = {
   deleted: boolean
 }
 
+export type SystemMeta = {
+  action: 'created' | 'added' | 'removed' | 'left' | 'renamed'
+  title?: string
+  target_id?: string
+  target_name?: string
+}
+
 export type Message = {
   id: string
   chat_id: string
   seq: number
   rev: number
+  kind: 'text' | 'system'
+  meta?: SystemMeta
   sender_id: string
   sender: Sender
   client_id: string
@@ -72,10 +81,20 @@ export type Message = {
   deleted_at: string | null
 }
 
+export type ChatKind = 'direct' | 'group' | 'channel'
+export type Role = 'owner' | 'admin' | 'member'
+
 export type Chat = {
   id: string
-  kind: 'direct'
-  peer: PublicUser
+  kind: ChatKind
+  title: string
+  about: string
+  handle: string | null
+  is_public: boolean
+  peer: PublicUser | null
+  role: Role
+  member_count: number
+  online_count: number
   last_seq: number
   last_rev: number
   last_read_seq: number
@@ -90,5 +109,26 @@ export type ServerEvent =
   | { type: 'message.new'; chat_id: string; message: Message }
   | { type: 'message.updated'; chat_id: string; message: Message }
   | { type: 'chat.read'; chat_id: string; user_id: string; seq: number }
+  | { type: 'chat.updated'; chat_id: string }
+  | { type: 'chat.removed'; chat_id: string }
   | { type: 'typing'; chat_id: string; user_id: string }
   | { type: 'presence'; user_id: string; online: boolean; last_seen_at: string | null }
+
+export type Member = PublicUser & {
+  role: Role
+  joined_at: string
+}
+
+export type ChannelResult = {
+  id: string
+  title: string
+  about: string
+  handle: string | null
+  member_count: number
+  joined: boolean
+}
+
+export type SearchResult = {
+  users: PublicUser[]
+  channels: ChannelResult[]
+}

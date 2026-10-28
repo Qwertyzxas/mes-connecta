@@ -9,18 +9,20 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, Navigate, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Avatar } from '../components/Avatar'
+import { ChatInfo } from '../components/ChatInfo'
 import { Ticks } from '../components/Sidebar'
 import { ApiError } from '../lib/api'
 import { chatApi } from '../lib/chat-api'
 import { chatKey, chatsKey, markReadLocally } from '../lib/chat-cache'
+import { canManage, canPost, chatAvatarId, chatTitle, membersText, systemText } from '../lib/chat-display'
 import { describeError } from '../lib/errors'
 import { dayKey, formatDay, formatTime, lastSeenText } from '../lib/format'
 import { useDocumentVisible, useNow } from '../lib/hooks'
 import { realtime } from '../lib/realtime'
-import type { Chat, Message, ReplyPreview } from '../lib/types'
+import type { Chat, Member, Message, ReplyPreview } from '../lib/types'
 import { useAuth } from '../store/auth'
 import { selectDraft, useMessages, type PendingMessage } from '../store/messages'
 
@@ -87,6 +89,15 @@ function Conversation({ chat }: { chat: Chat }) {
   const now = useNow(1000, Boolean(typing))
   const isTyping = Boolean(typing && typing.until > now)
   const [menuFor, setMenuFor] = useState<string | null>(null)
+  const [showInfo, setShowInfo] = useState(false)
+  const removed = useMessages((s) => Boolean(s.removed[chat.id]))
+  const members = useQuery({
+    queryKey: ['members', chat.id],
+    queryFn: () => chatApi.members(chat.id),
+    enabled: chat.kind === 'group',
+    staleTime: 60_000,
+  })
+  const memberNames = useMemo(() => new Map((members.data ?? []).map((m: Member) => [m.id, m.display_name])), [members.data])
 
   const items = useMemo(() => state?.items ?? [], [state?.items])
 
@@ -157,23 +168,33 @@ function Conversation({ chat }: { chat: Chat }) {
     return null
   }, [items, me])
 
-  const status = isTyping ? 'печатает…' : lastSeenText(chat.peer.online, chat.peer.last_seen_at, now)
+  const title = chatTitle(chat)
+  const typingName = typing && chat.kind === 'group' ? memberNames.get(typing.userId) : undefined
+  const status = isTyping
+    ? typingName
+      ? `${typingName} печатает…`
+      : 'печатает…'
+    : chat.peer
+      ? lastSeenText(chat.peer.online, chat.peer.last_seen_at, now)
+      : membersText(chat)
+  const live = isTyping || Boolean(chat.peer?.online)
+
+  if (removed) return <Navigate to="/" replace />
 
   return (
-    <section className="conversation" aria-label={`Чат с ${chat.peer.display_name}`}>
+    <section className="conversation" aria-label={`Чат с ${title}`}>
       <header className="conversation__head">
         <Link to="/" className="icon-btn conversation__back" aria-label="Назад к чатам">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
             <path d="M15 5 8 12l7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </Link>
-        <Avatar id={chat.peer.id} name={chat.peer.display_name} size={40} online={chat.peer.online} />
-        <div className="conversation__who">
-          <h1 className="conversation__name">{chat.peer.display_name}</h1>
-          <p
-            className={`conversation__status${isTyping || chat.peer.online ? ' conversation__status--live' : ''}`}
-            data-testid="peer-status"
-          >
+        <button type="button" className="conversation__avatar-btn" onClick={() => setShowInfo(true)} aria-label="Информация о чате">
+          <Avatar id={chatAvatarId(chat)} name={title} size={40} online={chat.peer?.online} />
+        </button>
+        <div className="conversation__who" onClick={() => setShowInfo(true)}>
+          <h1 className="conversation__name">{title}</h1>
+          <p className={`conversation__status${live ? ' conversation__status--live' : ''}`} data-testid="peer-status">
             {status}
           </p>
         </div>
@@ -183,7 +204,7 @@ function Conversation({ chat }: { chat: Chat }) {
         {state?.status === 'loading' && <p className="messages__note">Загружаем сообщения…</p>}
         {state?.status === 'error' && <p className="messages__note">Не удалось загрузить сообщения</p>}
         {state?.loadingOlder && <p className="messages__note">Загружаем историю…</p>}
-        {state?.status === 'ready' && items.length === 0 && !pending?.length && (
+        {state?.status === 'ready' && items.length === 0 && !pending?.length && chat.peer && (
           <div className="messages__intro">
             <Avatar id={chat.peer.id} name={chat.peer.display_name} size={72} />
             <p>Это начало переписки с @{chat.peer.username}</p>
@@ -193,8 +214,7 @@ function Conversation({ chat }: { chat: Chat }) {
           items={items}
           pending={pending ?? []}
           me={me}
-          peerReadSeq={chat.peer_last_read_seq}
-          chatId={chat.id}
+          chat={chat}
           menuFor={menuFor}
           setMenuFor={setMenuFor}
         />
@@ -207,7 +227,14 @@ function Conversation({ chat }: { chat: Chat }) {
         )}
       </div>
 
-      <Composer chatId={chat.id} lastOwn={lastOwn} onSent={() => (stickToBottom.current = true)} />
+      {canPost(chat) ? (
+        <Composer chatId={chat.id} lastOwn={lastOwn} onSent={() => (stickToBottom.current = true)} />
+      ) : (
+        <div className="composer composer--readonly" role="note">
+          В канале публикуют только администраторы
+        </div>
+      )}
+      {showInfo && <ChatInfo chat={chat} onClose={() => setShowInfo(false)} />}
     </section>
   )
 }
@@ -216,13 +243,13 @@ type ListProps = {
   items: Message[]
   pending: PendingMessage[]
   me: string
-  peerReadSeq: number
-  chatId: string
+  chat: Chat
   menuFor: string | null
   setMenuFor: (id: string | null) => void
 }
 
-function MessageList({ items, pending, me, peerReadSeq, chatId, menuFor, setMenuFor }: ListProps) {
+function MessageList({ items, pending, me, chat, menuFor, setMenuFor }: ListProps) {
+  const chatId = chat.id
   const retry = useMessages((s) => s.retry)
   const discard = useMessages((s) => s.discard)
   let prevDay: number | null = null
@@ -241,18 +268,36 @@ function MessageList({ items, pending, me, peerReadSeq, chatId, menuFor, setMenu
   return (
     <>
       {items.map((m, i) => {
+        if (m.kind === 'system') {
+          return (
+            <Fragment key={m.id}>
+              {day(m.created_at)}
+              <div className="system-msg" data-seq={m.seq} role="status">
+                <span>{systemText(m, me)}</span>
+              </div>
+            </Fragment>
+          )
+        }
+        const prev = items[i - 1]
         const next = items[i + 1]
-        const tail = !next || next.sender_id !== m.sender_id || dayKey(next.created_at) !== dayKey(m.created_at)
+        const sameDay = (a?: Message) => a && dayKey(a.created_at) === dayKey(m.created_at)
+        const tail = !next || next.kind !== 'text' || next.sender_id !== m.sender_id || !sameDay(next)
+        const head = !prev || prev.kind !== 'text' || prev.sender_id !== m.sender_id || !sameDay(prev)
+        const mine = m.sender_id === me
         return (
           <Fragment key={m.id}>
             {day(m.created_at)}
             <MessageBubble
               message={m}
-              mine={m.sender_id === me}
+              mine={mine}
               me={me}
               tail={tail}
-              read={peerReadSeq >= m.seq}
+              author={chat.kind === 'group' && !mine && head ? m.sender.display_name : undefined}
+              read={chat.peer_last_read_seq >= m.seq}
+              showTicks={chat.kind !== 'channel'}
               chatId={chatId}
+              canReply={canPost(chat)}
+              canDelete={mine || canManage(chat)}
               menuOpen={menuFor === m.id}
               onToggleMenu={() => setMenuFor(menuFor === m.id ? null : m.id)}
               onCloseMenu={() => setMenuFor(null)}
@@ -308,14 +353,26 @@ type BubbleProps = {
   mine: boolean
   me: string
   tail: boolean
+  author?: string
   read: boolean
+  showTicks: boolean
   chatId: string
+  canReply: boolean
+  canDelete: boolean
   menuOpen: boolean
   onToggleMenu: () => void
   onCloseMenu: () => void
 }
 
-function MessageBubble({ message: m, mine, me, tail, read, chatId, menuOpen, onToggleMenu, onCloseMenu }: BubbleProps) {
+function authorColor(id: string): string {
+  const colors = ['#2f9bf0', '#7a5be6', '#d4568f', '#18a090', '#e07a2c', '#4a9a3c']
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
+  return colors[Math.abs(h) % colors.length]!
+}
+
+function MessageBubble(props: BubbleProps) {
+  const { message: m, mine, me, tail, author, read, showTicks, chatId, canReply, canDelete, menuOpen, onToggleMenu, onCloseMenu } = props
   const deleted = Boolean(m.deleted_at)
   const classes = ['bubble-row', mine && 'bubble-row--mine', tail && 'bubble-row--tail', deleted && 'bubble-row--deleted']
     .filter(Boolean)
@@ -329,12 +386,17 @@ function MessageBubble({ message: m, mine, me, tail, read, chatId, menuOpen, onT
           e.preventDefault()
           onToggleMenu()
         }}>
+          {author && (
+            <span className="bubble__author" style={{ color: authorColor(m.sender_id) }}>
+              {author}
+            </span>
+          )}
           {m.reply_to && !deleted && <Quote reply={m.reply_to} me={me} />}
           <span className="bubble__text">{deleted ? 'Сообщение удалено' : m.body}</span>
           <span className="bubble__meta">
             {m.edited_at && !deleted && <span className="bubble__edited">изменено</span>}
             <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
-            {mine && !deleted && <Ticks read={read} />}
+            {mine && !deleted && showTicks && <Ticks read={read} />}
           </span>
         </div>
         {!deleted && (
@@ -352,13 +414,24 @@ function MessageBubble({ message: m, mine, me, tail, read, chatId, menuOpen, onT
             </svg>
           </button>
         )}
-        {menuOpen && <MessageMenu message={m} mine={mine} chatId={chatId} onClose={onCloseMenu} />}
+        {menuOpen && (
+          <MessageMenu message={m} mine={mine} chatId={chatId} canReply={canReply} canDelete={canDelete} onClose={onCloseMenu} />
+        )}
       </div>
     </div>
   )
 }
 
-function MessageMenu({ message, mine, chatId, onClose }: { message: Message; mine: boolean; chatId: string; onClose: () => void }) {
+type MenuProps = {
+  message: Message
+  mine: boolean
+  chatId: string
+  canReply: boolean
+  canDelete: boolean
+  onClose: () => void
+}
+
+function MessageMenu({ message, mine, chatId, canReply, canDelete, onClose }: MenuProps) {
   const setReply = useMessages((s) => s.setReply)
   const setEditing = useMessages((s) => s.setEditing)
   const remove = useMessages((s) => s.remove)
@@ -381,7 +454,7 @@ function MessageMenu({ message, mine, chatId, onClose }: { message: Message; min
   if (confirming) {
     return (
       <div className="msg-menu" role="dialog" aria-label="Удаление сообщения">
-        <p className="msg-menu__title">Удалить у всех?</p>
+        <p className="msg-menu__title">{mine ? 'Удалить у всех?' : 'Удалить сообщение участника?'}</p>
         {error && <p className="msg-menu__error">{error}</p>}
         <div className="msg-menu__row">
           <button type="button" className="msg-menu__danger" onClick={() => void del()} disabled={busy}>
@@ -397,16 +470,18 @@ function MessageMenu({ message, mine, chatId, onClose }: { message: Message; min
 
   return (
     <div className="msg-menu" role="menu" aria-label="Действия с сообщением">
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => {
-          setReply(chatId, message)
-          onClose()
-        }}
-      >
-        Ответить
-      </button>
+      {canReply && (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setReply(chatId, message)
+            onClose()
+          }}
+        >
+          Ответить
+        </button>
+      )}
       <button
         type="button"
         role="menuitem"
@@ -429,7 +504,7 @@ function MessageMenu({ message, mine, chatId, onClose }: { message: Message; min
           Изменить
         </button>
       )}
-      {mine && (
+      {canDelete && (
         <button type="button" role="menuitem" className="msg-menu__danger" onClick={() => setConfirming(true)}>
           Удалить
         </button>

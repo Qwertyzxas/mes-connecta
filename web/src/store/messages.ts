@@ -34,6 +34,7 @@ type MessagesState = {
   drafts: Record<string, Draft>
   typing: Record<string, { userId: string; until: number }>
   activeChatId: string | null
+  removed: Record<string, true>
 
   open: (chatId: string) => Promise<void>
   loadOlder: (chatId: string) => Promise<void>
@@ -50,6 +51,7 @@ type MessagesState = {
   setTyping: (chatId: string, userId: string) => void
   clearTyping: (chatId: string) => void
   setActive: (chatId: string | null) => void
+  forget: (chatId: string) => void
   reset: () => void
 }
 
@@ -137,8 +139,16 @@ export const useMessages = create<MessagesState>()((set, get) => {
     drafts: {},
     typing: {},
     activeChatId: null,
+    removed: {},
 
     open: async (chatId) => {
+      if (get().removed[chatId]) {
+        set((s) => {
+          const removed = { ...s.removed }
+          delete removed[chatId]
+          return { removed }
+        })
+      }
       const existing = get().byChat[chatId]
       if (existing?.status === 'ready') {
         await get().catchUp(chatId)
@@ -270,7 +280,18 @@ export const useMessages = create<MessagesState>()((set, get) => {
 
     setActive: (chatId) => set({ activeChatId: chatId }),
 
-    reset: () => set({ byChat: {}, pending: {}, drafts: {}, typing: {}, activeChatId: null }),
+    forget: (chatId) =>
+      set((s) => {
+        const byChat = { ...s.byChat }
+        const pending = { ...s.pending }
+        const drafts = { ...s.drafts }
+        delete byChat[chatId]
+        delete pending[chatId]
+        delete drafts[chatId]
+        return { byChat, pending, drafts, removed: { ...s.removed, [chatId]: true } }
+      }),
+
+    reset: () => set({ byChat: {}, pending: {}, drafts: {}, typing: {}, activeChatId: null, removed: {} }),
   }
 })
 

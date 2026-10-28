@@ -15,9 +15,11 @@ export class ChatsPage {
   readonly composer: Locator
   readonly sendButton: Locator
   readonly composerContext: Locator
+  readonly info: Locator
+  readonly readOnlyNote: Locator
 
   constructor(readonly page: Page) {
-    this.search = page.getByLabel('Поиск людей')
+    this.search = page.getByLabel('Поиск', { exact: true })
     this.chatList = page.getByRole('list', { name: 'Чаты' })
     this.searchResults = page.getByRole('list', { name: 'Найденные пользователи' })
     this.emptyState = page.getByText('Чатов пока нет.')
@@ -31,6 +33,8 @@ export class ChatsPage {
     this.composer = page.getByLabel('Сообщение', { exact: true })
     this.sendButton = page.getByRole('button', { name: 'Отправить' })
     this.composerContext = page.getByTestId('composer-context')
+    this.info = page.getByRole('complementary', { name: 'Информация о чате' })
+    this.readOnlyNote = page.getByRole('note')
   }
 
   async goto() {
@@ -58,6 +62,46 @@ export class ChatsPage {
 
   menuItems(): Locator {
     return this.page.getByRole('menu', { name: 'Действия с сообщением' }).getByRole('menuitem')
+  }
+
+  systemMessage(text: string): Locator {
+    return this.log.locator('.system-msg').filter({ hasText: text })
+  }
+
+  member(name: string): Locator {
+    return this.info.getByTestId('member').filter({ hasText: name })
+  }
+
+  async openInfo() {
+    await this.page.getByRole('button', { name: 'Информация о чате' }).click()
+    await this.info.waitFor()
+  }
+
+  async pickUsers(scope: Locator, usernames: string[]) {
+    for (const username of usernames) {
+      await scope.getByLabel('Найти участника').fill(username)
+      await scope.getByRole('list', { name: 'Кого добавить' }).getByRole('button').filter({ hasText: `@${username}` }).click()
+    }
+  }
+
+  async createGroup(title: string, usernames: string[]) {
+    await this.page.getByRole('button', { name: 'Создать', exact: true }).click()
+    await this.page.getByRole('menuitem', { name: 'Новая группа' }).click()
+    const dialog = this.page.getByRole('dialog', { name: 'Новая группа' })
+    await dialog.getByLabel('Название группы').fill(title)
+    await this.pickUsers(dialog, usernames)
+    await dialog.getByRole('button', { name: 'Создать группу' }).click()
+    await this.conversation.waitFor()
+  }
+
+  async createChannel(title: string, handle: string) {
+    await this.page.getByRole('button', { name: 'Создать', exact: true }).click()
+    await this.page.getByRole('menuitem', { name: 'Новый канал' }).click()
+    const dialog = this.page.getByRole('dialog', { name: 'Новый канал' })
+    await dialog.getByLabel('Название канала').fill(title)
+    await dialog.getByLabel('Адрес канала').fill(handle)
+    await dialog.getByRole('button', { name: 'Создать канал' }).click()
+    await this.conversation.waitFor()
   }
 
   async send(text: string) {
