@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { Avatar } from '../components/Avatar'
@@ -5,6 +6,7 @@ import { Button } from '../components/Button'
 import { authApi } from '../lib/auth-api'
 import { describeError } from '../lib/errors'
 import { describeDevice, timeAgo } from '../lib/format'
+import { disablePush, enablePush, pushSupported, refreshPushState, usePush } from '../lib/push'
 import type { Session } from '../lib/types'
 import { useAuth } from '../store/auth'
 
@@ -48,6 +50,8 @@ export function SettingsPage() {
           </div>
         </section>
 
+        <NotificationsPanel />
+
         <section className="panel">
           <div className="panel__head">
             <h2>Активные сеансы</h2>
@@ -86,5 +90,41 @@ export function SettingsPage() {
 
       </main>
     </div>
+  )
+}
+
+function NotificationsPanel() {
+  const { state, error } = usePush()
+  useEffect(() => {
+    void refreshPushState()
+  }, [])
+  const text: Record<typeof state, string> = {
+    unsupported: 'Этот браузер не поддерживает push-уведомления. На iPhone добавьте Connecta на экран «Домой».',
+    denied: 'Уведомления запрещены в настройках браузера для этого сайта.',
+    off: 'Уведомления о новых сообщениях, когда приложение закрыто.',
+    on: 'Уведомления включены на этом устройстве.',
+    busy: 'Минутку…',
+  }
+  return (
+    <section className="panel" aria-label="Уведомления">
+      <div className="panel__head">
+        <h2>Уведомления</h2>
+      </div>
+      <p className="muted">{text[state]}</p>
+      {error && <p className="alert">{error}</p>}
+      {pushSupported() && state !== 'denied' && (
+        <div>
+          {state === 'on' ? (
+            <Button variant="ghost" onClick={() => void disablePush()}>
+              Выключить уведомления
+            </Button>
+          ) : (
+            <Button onClick={() => void enablePush()} loading={state === 'busy'}>
+              Включить уведомления
+            </Button>
+          )}
+        </div>
+      )}
+    </section>
   )
 }

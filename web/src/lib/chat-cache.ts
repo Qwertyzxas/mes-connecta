@@ -1,5 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { useMessages } from '../store/messages'
+import { chatTitle, previewText } from './chat-display'
+import { showLocalNotification } from './push'
 import type { Chat, Message, ServerEvent } from './types'
 
 export const chatsKey = ['chats'] as const
@@ -56,6 +58,12 @@ export function applyMessage(qc: QueryClient, me: string, message: Message) {
   })
   if (!found) {
     void qc.invalidateQueries({ queryKey: chatsKey })
+  }
+  if (!mine && message.kind === 'text' && document.visibilityState === 'hidden') {
+    const chat = qc.getQueryData<Chat[]>(chatsKey)?.find((c) => c.id === message.chat_id)
+    if (chat && !chat.muted) {
+      void showLocalNotification(chatTitle(chat), previewText(chat, message, me), `/chat/${chat.id}`, `chat-${chat.id}`)
+    }
   }
 }
 

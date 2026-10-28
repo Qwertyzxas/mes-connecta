@@ -17,6 +17,7 @@ import (
 	"connecta/internal/auth"
 	"connecta/internal/config"
 	"connecta/internal/files"
+	"connecta/internal/push"
 	"connecta/internal/ratelimit"
 	"connecta/internal/realtime"
 	"connecta/internal/store"
@@ -73,14 +74,24 @@ func run(log *slog.Logger) error {
 	}
 	defer hub.Close()
 
+	st := store.New(pool)
+	presence := realtime.NewPresence(rdb)
+	pusher, err := push.New(ctx, st, log, presence.Online, push.Config{
+		Subject: cfg.PushSubject, AllowInsecure: cfg.PushAllowInsecure,
+	})
+	if err != nil {
+		return fmt.Errorf("push: %w", err)
+	}
+
 	srv := api.New(
 		cfg,
-		store.New(pool),
+		st,
 		auth.NewTokens(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTL),
 		ratelimit.New(rdb),
 		rdb,
 		hub,
 		storage,
+		pusher,
 		log,
 	)
 

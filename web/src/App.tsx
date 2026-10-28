@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router'
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useNavigate } from 'react-router'
 import { ChatPage } from './pages/ChatPage'
 import { ChatsLayout, NoChatSelected } from './pages/ChatsLayout'
 import { LoginPage } from './pages/LoginPage'
@@ -15,6 +15,19 @@ function RequireAuth() {
 function GuestOnly() {
   const status = useAuth((s) => s.status)
   return status === 'guest' ? <Outlet /> : <Navigate to="/" replace />
+}
+
+function ServiceWorkerNavigation() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    const onMessage = (e: MessageEvent<{ type?: string; url?: string }>) => {
+      if (e.data?.type === 'navigate' && e.data.url?.startsWith('/')) void navigate(e.data.url)
+    }
+    navigator.serviceWorker.addEventListener('message', onMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage)
+  }, [navigate])
+  return null
 }
 
 function Splash() {
@@ -37,6 +50,7 @@ export function App() {
 
   return (
     <BrowserRouter>
+      <ServiceWorkerNavigation />
       <Routes>
         <Route element={<GuestOnly />}>
           <Route path="/login" element={<LoginPage />} />

@@ -23,6 +23,7 @@ import (
 	"connecta/internal/auth"
 	"connecta/internal/config"
 	"connecta/internal/files"
+	"connecta/internal/push"
 	"connecta/internal/ratelimit"
 	"connecta/internal/realtime"
 	"connecta/internal/store"
@@ -78,11 +79,12 @@ func setup(t *testing.T) *env {
 	}
 
 	cfg := config.Config{
-		JWTSecret:    []byte(strings.Repeat("k", 32)),
-		JWTIssuer:    "connecta-test",
-		AccessTTL:    time.Minute,
-		RefreshTTL:   time.Hour,
-		CookieSecure: false,
+		JWTSecret:         []byte(strings.Repeat("k", 32)),
+		JWTIssuer:         "connecta-test",
+		AccessTTL:         time.Minute,
+		RefreshTTL:        time.Hour,
+		CookieSecure:      false,
+		PushAllowInsecure: true,
 	}
 	storageOnce.Do(func() {
 		storage, storageErr = files.Open(ctx, files.Config{
@@ -100,8 +102,17 @@ func setup(t *testing.T) *env {
 		t.Fatalf("realtime hub: %v", err)
 	}
 	t.Cleanup(func() { _ = hub.Close() })
-	srv := New(cfg, store.New(pool), auth.NewTokens(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTL),
-		ratelimit.New(rdb), rdb, hub, storage, log)
+	st := store.New(pool)
+	pushCtx, stopPush := context.WithCancel(context.Background())
+	t.Cleanup(stopPush)
+	pusher, err := push.New(pushCtx, st, log, realtime.NewPresence(rdb).Online, push.Config{
+		Subject: "mailto:test@connecta.local", AllowInsecure: true, Workers: 2,
+	})
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	srv := New(cfg, st, auth.NewTokens(cfg.JWTSecret, cfg.JWTIssuer, cfg.AccessTTL),
+		ratelimit.New(rdb), rdb, hub, storage, pusher, log)
 
 	ts := httptest.NewServer(srv.Routes())
 	t.Cleanup(ts.Close)

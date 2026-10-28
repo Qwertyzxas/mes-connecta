@@ -47,6 +47,7 @@ type Chat struct {
 	IsPublic        bool        `json:"is_public"`
 	Peer            *PublicUser `json:"peer"`
 	Role            string      `json:"role"`
+	Muted           bool        `json:"muted"`
 	MemberCount     int64       `json:"member_count"`
 	OnlineCount     int64       `json:"online_count"`
 	LastSeq         int64       `json:"last_seq"`
@@ -585,7 +586,7 @@ func (s *Store) SetRole(ctx context.Context, chatID, targetID, role string) erro
 }
 
 const chatQuery = `
-	SELECT c.id::text, c.kind, COALESCE(c.title, ''), c.about, c.handle, c.is_public, me.role,
+	SELECT c.id::text, c.kind, COALESCE(c.title, ''), c.about, c.handle, c.is_public, me.role, me.muted,
 	       (SELECT count(*) FROM conversation_members o WHERE o.conversation_id = c.id),
 	       c.last_seq, c.last_rev, me.last_read_seq,
 	       COALESCE((SELECT max(o.last_read_seq) FROM conversation_members o
@@ -635,7 +636,7 @@ func scanChat(row scanner) (Chat, error) {
 		msgDeleted *time.Time
 	)
 	err := row.Scan(
-		&c.ID, &c.Kind, &c.Title, &c.About, &c.Handle, &c.IsPublic, &c.Role,
+		&c.ID, &c.Kind, &c.Title, &c.About, &c.Handle, &c.IsPublic, &c.Role, &c.Muted,
 		&c.MemberCount, &c.LastSeq, &c.LastRev, &c.LastReadSeq, &c.PeerLastReadSeq, &c.UpdatedAt,
 		&peerID, &peerName, &peerDisp, &peerSeen,
 		&msgID, &msgSeq, &msgRev, &msgKind, &msgMeta, &msgSender, &senderName, &senderDisp,
@@ -721,4 +722,10 @@ func (s *Store) GetChat(ctx context.Context, userID, chatID string) (Chat, error
 func (s *Store) SetLastSeen(ctx context.Context, userID string, at time.Time) error {
 	_, err := s.pool.Exec(ctx, `UPDATE users SET last_seen_at = $2 WHERE id = $1::uuid`, userID, at)
 	return err
+}
+
+func (s *Store) ChatTitle(ctx context.Context, chatID string) (string, string, error) {
+	var kind, title string
+	err := s.pool.QueryRow(ctx, `SELECT kind, COALESCE(title, '') FROM conversations WHERE id = $1::uuid`, chatID).Scan(&kind, &title)
+	return kind, title, err
 }

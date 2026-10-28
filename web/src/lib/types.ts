@@ -108,6 +108,7 @@ export type Chat = {
   is_public: boolean
   peer: PublicUser | null
   role: Role
+  muted: boolean
   member_count: number
   online_count: number
   last_seq: number

@@ -308,6 +308,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.broadcastToChat(r.Context(), chatID, messageEvent{Type: "message.new", ChatID: chatID, Message: msg})
+	s.notifyPush(r.Context(), chatID, msg)
 	writeJSON(w, http.StatusCreated, msg)
 }
 
