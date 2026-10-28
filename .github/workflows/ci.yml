@@ -58,9 +58,20 @@ jobs:
         run: eval "$GO_MODULES_SCRIPT"
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=connecta -e MINIO_ROOT_PASSWORD=connecta-secret minio/minio:latest server /data
-          for i in $(seq 1 60); do curl -sf http://localhost:9000/minio/health/live && exit 0; sleep 1; done
-          docker logs minio; exit 1
+          errors=""
+          for image in quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z minio/minio:RELEASE.2025-04-22T22-12-26Z quay.io/minio/minio:latest minio/minio:latest; do
+            docker rm -f minio >/dev/null 2>&1 || true
+            if out=$(docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=connecta -e MINIO_ROOT_PASSWORD=connecta-secret "$image" server /data 2>&1); then
+              for i in $(seq 1 60); do
+                if curl -sf http://localhost:9000/minio/health/live >/dev/null; then echo "::notice title=minio::started $image"; exit 0; fi
+                sleep 1
+              done
+              out="$(docker logs minio 2>&1 | tail -20)"
+            fi
+            errors="$errors $image: $(echo "$out" | tr '\n' ' ' | cut -c1-300) |"
+          done
+          echo "::error title=minio::$errors"
+          exit 1
       - name: Vet
         run: go vet ./...
       - name: Build
@@ -142,9 +153,20 @@ jobs:
         working-directory: e2e
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=connecta -e MINIO_ROOT_PASSWORD=connecta-secret minio/minio:latest server /data
-          for i in $(seq 1 60); do curl -sf http://localhost:9000/minio/health/live && exit 0; sleep 1; done
-          docker logs minio; exit 1
+          errors=""
+          for image in quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z minio/minio:RELEASE.2025-04-22T22-12-26Z quay.io/minio/minio:latest minio/minio:latest; do
+            docker rm -f minio >/dev/null 2>&1 || true
+            if out=$(docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=connecta -e MINIO_ROOT_PASSWORD=connecta-secret "$image" server /data 2>&1); then
+              for i in $(seq 1 60); do
+                if curl -sf http://localhost:9000/minio/health/live >/dev/null; then echo "::notice title=minio::started $image"; exit 0; fi
+                sleep 1
+              done
+              out="$(docker logs minio 2>&1 | tail -20)"
+            fi
+            errors="$errors $image: $(echo "$out" | tr '\n' ' ' | cut -c1-300) |"
+          done
+          echo "::error title=minio::$errors"
+          exit 1
       - name: Run Playwright
         working-directory: e2e
         env:

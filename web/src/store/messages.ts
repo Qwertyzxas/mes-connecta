@@ -1,18 +1,36 @@
 import { create } from 'zustand'
 import { chatApi } from '../lib/chat-api'
-import type { Message, ReplyPreview } from '../lib/types'
+import type { Attachment, AttachmentKind, Message, ReplyPreview } from '../lib/types'
+import { uploadAttachment } from '../lib/upload'
 
 export const PAGE_SIZE = 50
 const SYNC_PAGE = 100
 const TYPING_TTL = 5_000
+
+export type LocalFile = {
+  localId: string
+  kind: AttachmentKind
+  name: string
+  blob: Blob
+  size: number
+  previewUrl?: string
+  durationMs?: number
+}
+
+export type PendingAttachment = LocalFile & {
+  progress: number
+  uploaded?: Attachment
+}
 
 export type PendingMessage = {
   client_id: string
   chat_id: string
   body: string
   reply_to: ReplyPreview | null
+  attachments: PendingAttachment[]
   created_at: string
   status: 'sending' | 'failed'
+  error?: string
 }
 
 type ChatMessages = {
@@ -41,7 +59,7 @@ type MessagesState = {
   catchUp: (chatId: string) => Promise<void>
   catchUpAll: () => Promise<void>
   receive: (message: Message) => void
-  send: (chatId: string, body: string, replyTo?: Message | null) => Promise<Message | null>
+  send: (chatId: string, body: string, replyTo?: Message | null, files?: LocalFile[]) => Promise<Message | null>
   retry: (chatId: string, clientId: string) => Promise<void>
   discard: (chatId: string, clientId: string) => void
   edit: (chatId: string, messageId: string, body: string) => Promise<void>
@@ -108,26 +126,55 @@ export const useMessages = create<MessagesState>()((set, get) => {
   const removePending = (chatId: string, clientId: string) =>
     set((s) => {
       const list = s.pending[chatId]
-      if (!list?.some((p) => p.client_id === clientId)) return s
+      const target = list?.find((p) => p.client_id === clientId)
+      if (!list || !target) return s
+      for (const a of target.attachments) if (a.previewUrl) URL.revokeObjectURL(a.previewUrl)
       return { pending: { ...s.pending, [chatId]: list.filter((p) => p.client_id !== clientId) } }
     })
 
+  const patchPending = (chatId: string, clientId: string, fn: (p: PendingMessage) => PendingMessage) =>
+    set((s) => ({
+      pending: {
+        ...s.pending,
+        [chatId]: (s.pending[chatId] ?? []).map((p) => (p.client_id === clientId ? fn(p) : p)),
+      },
+    }))
+
   const setDraft = (chatId: string, draft: Draft) => set((s) => ({ drafts: { ...s.drafts, [chatId]: draft } }))
 
-  const deliver = async (chatId: string, pending: PendingMessage): Promise<Message | null> => {
+  const deliver = async (chatId: string, clientId: string): Promise<Message | null> => {
+    const current = () => get().pending[chatId]?.find((p) => p.client_id === clientId)
     try {
-      const msg = await chatApi.send(chatId, pending.client_id, pending.body, pending.reply_to?.id)
+      for (const att of current()?.attachments ?? []) {
+        if (att.uploaded) continue
+        const uploaded = await uploadAttachment(chatId, att.blob, {
+          kind: att.kind,
+          name: att.name,
+          durationMs: att.durationMs,
+          onProgress: (progress) =>
+            patchPending(chatId, clientId, (p) => ({
+              ...p,
+              attachments: p.attachments.map((a) => (a.localId === att.localId ? { ...a, progress } : a)),
+            })),
+        })
+        patchPending(chatId, clientId, (p) => ({
+          ...p,
+          attachments: p.attachments.map((a) => (a.localId === att.localId ? { ...a, progress: 1, uploaded } : a)),
+        }))
+      }
+      const pending = current()
+      if (!pending) return null
+      const ids = pending.attachments.map((a) => a.uploaded!.id)
+      const msg = await chatApi.send(chatId, pending.client_id, pending.body, pending.reply_to?.id, ids)
       get().receive(msg)
-      removePending(chatId, pending.client_id)
+      removePending(chatId, clientId)
       return msg
-    } catch {
-      set((s) => ({
-        pending: {
-          ...s.pending,
-          [chatId]: (s.pending[chatId] ?? []).map((p) =>
-            p.client_id === pending.client_id ? { ...p, status: 'failed' } : p,
-          ),
-        },
+    } catch (err) {
+      const status = (err as { status?: number }).status
+      patchPending(chatId, clientId, (p) => ({
+        ...p,
+        status: 'failed',
+        error: status === 413 ? 'Файл слишком большой' : undefined,
       }))
       return null
     }
@@ -226,17 +273,18 @@ export const useMessages = create<MessagesState>()((set, get) => {
       if (last && message.seq > last + 1) void get().catchUp(message.chat_id)
     },
 
-    send: async (chatId, body, replyTo) => {
+    send: async (chatId, body, replyTo, files = []) => {
       const pending: PendingMessage = {
         client_id: newClientId(),
         chat_id: chatId,
         body,
         reply_to: replyTo ? preview(replyTo) : null,
+        attachments: files.map((f) => ({ ...f, progress: 0 })),
         created_at: new Date().toISOString(),
         status: 'sending',
       }
       set((s) => ({ pending: { ...s.pending, [chatId]: [...(s.pending[chatId] ?? []), pending] } }))
-      return deliver(chatId, pending)
+      return deliver(chatId, pending.client_id)
     },
 
     retry: async (chatId, clientId) => {
@@ -245,10 +293,12 @@ export const useMessages = create<MessagesState>()((set, get) => {
       set((s) => ({
         pending: {
           ...s.pending,
-          [chatId]: (s.pending[chatId] ?? []).map((p) => (p.client_id === clientId ? { ...p, status: 'sending' } : p)),
+          [chatId]: (s.pending[chatId] ?? []).map((p) =>
+            p.client_id === clientId ? { ...p, status: 'sending', error: undefined } : p,
+          ),
         },
       }))
-      await deliver(chatId, { ...pending, status: 'sending' })
+      await deliver(chatId, clientId)
     },
 
     discard: (chatId, clientId) => removePending(chatId, clientId),

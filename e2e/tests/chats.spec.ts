@@ -86,9 +86,10 @@ test.describe('Личные чаты', () => {
     const [alice, bob] = await twoUsers(page, openDevice)
     await alice.ui.startChatWith(bob.user.username)
 
-    await expect(alice.ui.sendButton).toBeDisabled()
+    await expect(alice.ui.sendButton).toHaveCount(0)
+    await expect(alice.ui.micButton).toBeVisible()
     await alice.ui.composer.fill('   ')
-    await expect(alice.ui.sendButton).toBeDisabled()
+    await expect(alice.ui.sendButton).toHaveCount(0)
 
     await alice.ui.composer.fill('первая строка')
     await alice.ui.composer.press('Shift+Enter')

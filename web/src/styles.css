@@ -1713,3 +1713,351 @@ a:hover {
 .link-btn:disabled {
   opacity: 0.6;
 }
+
+.composer__icon {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.composer__icon:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.composer__icon:disabled {
+  opacity: 0.4;
+}
+
+.composer--recording .composer__row {
+  align-items: center;
+}
+
+.recording {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.recording__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.staged {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.staged__item {
+  position: relative;
+  flex: none;
+  height: 72px;
+  min-width: 72px;
+  max-width: 180px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.staged__item img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  display: block;
+}
+
+.staged__file {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding: 8px 28px 8px 10px;
+  font-size: 12px;
+}
+
+.staged__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.staged__size {
+  color: var(--text-muted);
+}
+
+.staged__item button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.conversation--drop::after {
+  content: 'Отпустите, чтобы прикрепить';
+  position: absolute;
+  inset: 8px;
+  z-index: 15;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+
+.images {
+  display: grid;
+  gap: 3px;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.images--1 {
+  width: min(320px, 62vw);
+}
+
+.images--2,
+.images--3,
+.images--4 {
+  grid-template-columns: 1fr 1fr;
+  width: min(320px, 62vw);
+}
+
+.images--3 > :first-child {
+  grid-column: span 2;
+}
+
+.image-thumb {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: var(--surface-2);
+  cursor: zoom-in;
+  aspect-ratio: 1;
+  overflow: hidden;
+}
+
+.image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(3, 6, 12, 0.92);
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: calc(100dvh - 96px);
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.lightbox__bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: #fff;
+  font-size: 14px;
+}
+
+.lightbox__bar a {
+  color: #fff;
+}
+
+.lightbox__bar button {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+  padding: 6px 8px 6px 4px;
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.file-card:hover {
+  text-decoration: none;
+  background: rgba(127, 127, 127, 0.1);
+}
+
+.file-card__icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.bubble-row--mine .file-card__icon {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.file-card__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-card__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.file-card__size {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.voice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+
+.voice__play {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand-gradient);
+  color: #fff;
+  cursor: pointer;
+}
+
+.bubble-row--mine .voice__play {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.voice__track {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.bubble-row--mine .voice__track {
+  accent-color: #fff;
+}
+
+.voice__time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.pending-att {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.pending-att img {
+  width: min(240px, 60vw);
+  max-height: 240px;
+  object-fit: cover;
+  display: block;
+  opacity: 0.75;
+}
+
+.pending-att__name {
+  display: block;
+  padding: 6px 0;
+  font-weight: 600;
+}
+
+.pending-att__progress {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.pending-att--file .pending-att__progress,
+.pending-att--voice .pending-att__progress {
+  position: static;
+  margin-top: 4px;
+}
+
+.pending-att__progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #fff;
+  transition: width 0.15s;
+}

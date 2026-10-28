@@ -64,6 +64,20 @@ export type SystemMeta = {
   target_name?: string
 }
 
+export type AttachmentKind = 'image' | 'file' | 'voice'
+
+export type Attachment = {
+  id: string
+  kind: AttachmentKind
+  name: string
+  content_type: string
+  size: number
+  width?: number
+  height?: number
+  duration_ms?: number
+  url: string
+}
+
 export type Message = {
   id: string
   chat_id: string
@@ -79,6 +93,7 @@ export type Message = {
   created_at: string
   edited_at: string | null
   deleted_at: string | null
+  attachments: Attachment[]
 }
 
 export type ChatKind = 'direct' | 'group' | 'channel'

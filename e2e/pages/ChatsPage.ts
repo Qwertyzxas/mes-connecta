@@ -16,6 +16,9 @@ export class ChatsPage {
   readonly sendButton: Locator
   readonly composerContext: Locator
   readonly info: Locator
+  readonly fileInput: Locator
+  readonly micButton: Locator
+  readonly staged: Locator
   readonly readOnlyNote: Locator
 
   constructor(readonly page: Page) {
@@ -34,6 +37,9 @@ export class ChatsPage {
     this.sendButton = page.getByRole('button', { name: 'Отправить' })
     this.composerContext = page.getByTestId('composer-context')
     this.info = page.getByRole('complementary', { name: 'Информация о чате' })
+    this.fileInput = page.getByLabel('Прикрепить файл')
+    this.micButton = page.getByRole('button', { name: 'Записать голосовое' })
+    this.staged = page.getByRole('list', { name: 'Вложения к отправке' }).getByRole('listitem')
     this.readOnlyNote = page.getByRole('note')
   }
 
