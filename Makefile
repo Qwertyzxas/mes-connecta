@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: setup env tidy deps dev-backend dev-web up down logs build vet test test-db test-backend test-e2e
 
-setup: env tidy
+setup: env
 	cd web && npm install
 	cd e2e && npm install && npx playwright install chromium
 
@@ -68,7 +68,7 @@ build:
 	cd backend && go build -o bin/server ./cmd/server
 	cd web && npm run build
 
-up: env tidy
+up: env
 	docker compose up -d --build
 
 down:
