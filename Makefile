@@ -1,0 +1,68 @@
+SHELL := /bin/bash
+
+.PHONY: setup env tidy deps dev-backend dev-web up down logs build vet test test-db test-backend test-e2e
+
+setup: env tidy
+	cd web && npm install
+	cd e2e && npm install && npx playwright install chromium
+
+env:
+	@test -f .env || { \
+		cp .env.example .env && \
+		sed -i.bak \
+			-e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$$(openssl rand -hex 24)/" \
+			-e "s/^JWT_SECRET=.*/JWT_SECRET=$$(openssl rand -hex 32)/" .env && \
+		rm -f .env.bak && echo ".env created"; }
+
+tidy:
+	cd backend && go mod tidy
+
+deps: env
+	docker compose up -d --wait postgres redis
+
+test-db: deps
+	@docker compose exec -T postgres psql -U connecta -d connecta -tAc \
+		"SELECT 1 FROM pg_database WHERE datname = 'connecta_test'" | grep -q 1 || \
+		docker compose exec -T postgres createdb -U connecta connecta_test
+
+dev-backend: env
+	@set -a && source .env && set +a && cd backend && \
+		DATABASE_URL="$(DB_URL)" \
+		REDIS_URL="redis://localhost:6379/0" \
+		COOKIE_SECURE=false \
+		go run ./cmd/server
+
+dev-web:
+	cd web && npm run dev
+
+DB_URL = postgres://connecta:$$POSTGRES_PASSWORD@localhost:5432/connecta?sslmode=disable
+TEST_DB_URL = postgres://connecta:$$POSTGRES_PASSWORD@localhost:5432/connecta_test?sslmode=disable
+
+test: test-backend test-e2e
+
+test-backend: test-db
+	@set -a && source .env && set +a && cd backend && \
+		TEST_DATABASE_URL="$(TEST_DB_URL)" TEST_REDIS_URL="redis://localhost:6379/15" \
+		go test -race -count=1 ./...
+
+test-e2e: test-db
+	@set -a && source .env && set +a && cd e2e && \
+		DATABASE_URL="$(TEST_DB_URL)" REDIS_URL="redis://localhost:6379/14" JWT_SECRET="$$JWT_SECRET" \
+		npx playwright test
+
+vet:
+	cd backend && go vet ./...
+	cd web && npm run typecheck
+
+build:
+	cd backend && go build -o bin/server ./cmd/server
+	cd web && npm run build
+
+up: env tidy
+	docker compose up -d --build
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f backend web
