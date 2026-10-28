@@ -32,7 +32,7 @@ export default defineConfig({
     serviceWorkers: 'block',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    permissions: ['microphone'],
+    permissions: ['microphone', 'notifications'],
     launchOptions: {
       args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
     },
