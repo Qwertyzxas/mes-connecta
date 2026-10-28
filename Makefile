@@ -14,12 +14,14 @@ env:
 			-e "s/^JWT_SECRET=.*/JWT_SECRET=$$(openssl rand -hex 32)/" \
 			-e "s/^S3_SECRET_KEY=.*/S3_SECRET_KEY=$$(openssl rand -hex 24)/" .env && \
 		rm -f .env.bak && echo ".env created"; }
+	@test -f deploy/s3.json || { set -a && . ./.env && set +a && mkdir -p deploy && \
+		printf '{"identities":[{"name":"connecta","credentials":[{"accessKey":"connecta","secretKey":"%s"}],"actions":["Admin","Read","Write","List","Tagging"]}]}\n' "$$S3_SECRET_KEY" > deploy/s3.json; }
 
 tidy:
 	cd backend && go mod tidy
 
 deps: env
-	docker compose up -d --wait postgres redis minio
+	docker compose up -d --wait postgres redis s3
 
 test-db: deps
 	@docker compose exec -T postgres psql -U connecta -d connecta -tAc \
