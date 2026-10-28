@@ -36,7 +36,7 @@ export class ChatsPage {
   }
 
   chatRow(displayName: string): Locator {
-    return this.chatList.getByRole('link').filter({ hasText: displayName })
+    return this.page.locator('ul[aria-label="Чаты"] a').filter({ hasText: displayName })
   }
 
   bubble(text: string): Locator {

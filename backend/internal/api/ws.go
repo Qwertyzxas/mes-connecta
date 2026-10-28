@@ -22,7 +22,7 @@ const (
 	wsReadLimit     = 4 << 10
 	wsWriteTimeout  = 10 * time.Second
 	wsPingInterval  = 25 * time.Second
-	typingThrottle  = 2 * time.Second
+	typingThrottle  = 500 * time.Millisecond
 	ticketKeyPrefix = "rt:ticket:"
 )
 
