@@ -228,3 +228,34 @@ func TestWSTicketOfRevokedSessionRejected(t *testing.T) {
 		t.Fatalf("revoked session ticket: err=%v", err)
 	}
 }
+
+func TestWSTypingIsRateLimited(t *testing.T) {
+	e := setup(t)
+	alice, bob := e.pair(t)
+	chat := alice.openChat(bob.user.ID)
+	aliceConn := alice.connect()
+	bobConn := bob.connect()
+	waitEvent(t, aliceConn, "presence", nil)
+
+	for i := 0; i < 20; i++ {
+		if err := wsjson.Write(context.Background(), bobConn, map[string]string{"type": "typing", "chat_id": chat.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	received := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	for {
+		var ev wsEvent
+		if err := wsjson.Read(ctx, aliceConn, &ev); err != nil {
+			break
+		}
+		if ev["type"] == "typing" {
+			received++
+		}
+	}
+	if received < 1 || received > typingBurst+1 {
+		t.Fatalf("typing events delivered = %d, want between 1 and %d", received, typingBurst+1)
+	}
+}

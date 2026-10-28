@@ -22,7 +22,7 @@ const (
 	wsReadLimit     = 4 << 10
 	wsWriteTimeout  = 10 * time.Second
 	wsPingInterval  = 25 * time.Second
-	typingThrottle  = 500 * time.Millisecond
+	typingBurst     = 5
 	ticketKeyPrefix = "rt:ticket:"
 )
 
@@ -213,7 +213,7 @@ func (s *Server) writeLoop(ctx context.Context, conn *websocket.Conn, client *re
 
 func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn, client *realtime.Client) {
 	members := map[string]bool{}
-	lastTyping := map[string]time.Time{}
+	tokens, refilled := float64(typingBurst), time.Now()
 
 	for {
 		_, data, err := conn.Read(ctx)
@@ -229,9 +229,13 @@ func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn, client *rea
 			if !uuidRe.MatchString(msg.ChatID) {
 				continue
 			}
-			if time.Since(lastTyping[msg.ChatID]) < typingThrottle {
+			now := time.Now()
+			tokens = min(typingBurst, tokens+now.Sub(refilled).Seconds())
+			refilled = now
+			if tokens < 1 {
 				continue
 			}
+			tokens--
 			isMember, cached := members[msg.ChatID]
 			if !cached {
 				ok, err := s.store.IsMember(ctx, msg.ChatID, client.UserID)
@@ -243,7 +247,6 @@ func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn, client *rea
 			if !isMember {
 				continue
 			}
-			lastTyping[msg.ChatID] = time.Now()
 			ids, err := s.store.MemberIDs(ctx, msg.ChatID)
 			if err != nil {
 				continue
