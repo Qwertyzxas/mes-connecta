@@ -17,7 +17,9 @@ export default defineConfig({
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
   workers: isCI ? 2 : undefined,
-  reporter: isCI ? [['github'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],
+  reporter: isCI
+    ? [['github'], ['html', { open: 'never' }], ['json', { outputFile: 'results.json' }]]
+    : [['list'], ['html', { open: 'never' }]],
   timeout: 30_000,
   expect: { timeout: 7_000 },
   use: {
