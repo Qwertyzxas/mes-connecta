@@ -15,8 +15,12 @@ export const chatApi = {
     const qs = q.toString()
     return api<Message[]>(`/chats/${id}/messages${qs ? `?${qs}` : ''}`)
   },
-  send: (id: string, clientId: string, body: string, replyToId?: string) =>
-    api<Message>(`/chats/${id}/messages`, json({ client_id: clientId, body, reply_to_id: replyToId ?? '' })),
+  send: (id: string, clientId: string, body: string, replyToId?: string, attachmentIds: string[] = []) =>
+    api<Message>(
+      `/chats/${id}/messages`,
+      json({ client_id: clientId, body, reply_to_id: replyToId ?? '', attachment_ids: attachmentIds }),
+    ),
+  fileUrl: (fileId: string) => api<{ url: string }>(`/files/${fileId}/url`),
   edit: (id: string, messageId: string, body: string) =>
     api<Message>(`/chats/${id}/messages/${messageId}`, { method: 'PATCH', body: JSON.stringify({ body }) }),
   remove: (id: string, messageId: string) => api<Message>(`/chats/${id}/messages/${messageId}`, { method: 'DELETE' }),

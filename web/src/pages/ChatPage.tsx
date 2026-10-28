@@ -6,11 +6,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
 import { Link, Navigate, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { MessageAttachments, PendingAttachments } from '../components/Attachments'
 import { Avatar } from '../components/Avatar'
 import { ChatInfo } from '../components/ChatInfo'
 import { Ticks } from '../components/Sidebar'
@@ -22,13 +25,32 @@ import { describeError } from '../lib/errors'
 import { dayKey, formatDay, formatTime, lastSeenText } from '../lib/format'
 import { useDocumentVisible, useNow } from '../lib/hooks'
 import { realtime } from '../lib/realtime'
+import { useRecorder } from '../lib/recorder'
+import { formatDuration, formatSize, kindOf } from '../lib/upload'
 import type { Chat, Member, Message, ReplyPreview } from '../lib/types'
 import { useAuth } from '../store/auth'
-import { selectDraft, useMessages, type PendingMessage } from '../store/messages'
+import { selectDraft, useMessages, type LocalFile, type PendingMessage } from '../store/messages'
 
 const MAX_LEN = 4096
 const NEAR_BOTTOM = 120
 const TYPING_EVERY = 3000
+const MAX_FILES = 10
+
+let localSeq = 0
+
+function toLocalFiles(files: Iterable<File>): LocalFile[] {
+  return [...files].map((file) => {
+    const kind = kindOf(file)
+    return {
+      localId: `local-${Date.now()}-${localSeq++}`,
+      kind,
+      name: file.name || (kind === 'image' ? 'image.png' : 'file'),
+      blob: file,
+      size: file.size,
+      previewUrl: kind === 'image' ? URL.createObjectURL(file) : undefined,
+    }
+  })
+}
 
 export function ChatPage() {
   const { chatId = '' } = useParams()
@@ -90,7 +112,13 @@ function Conversation({ chat }: { chat: Chat }) {
   const isTyping = Boolean(typing && typing.until > now)
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const [showInfo, setShowInfo] = useState(false)
+  const [staged, setStaged] = useState<LocalFile[]>([])
+  const [dragging, setDragging] = useState(false)
   const removed = useMessages((s) => Boolean(s.removed[chat.id]))
+  const stage = useCallback((files: Iterable<File>) => {
+    const added = toLocalFiles(files)
+    setStaged((prev) => [...prev, ...added].slice(0, MAX_FILES))
+  }, [])
   const members = useQuery({
     queryKey: ['members', chat.id],
     queryFn: () => chatApi.members(chat.id),
@@ -181,8 +209,27 @@ function Conversation({ chat }: { chat: Chat }) {
 
   if (removed) return <Navigate to="/" replace />
 
+  const droppable = canPost(chat)
+  const onDragOver = (e: DragEvent) => {
+    if (!droppable || !e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    setDragging(true)
+  }
+  const onDrop = (e: DragEvent) => {
+    if (!droppable) return
+    e.preventDefault()
+    setDragging(false)
+    if (e.dataTransfer.files.length) stage(e.dataTransfer.files)
+  }
+
   return (
-    <section className="conversation" aria-label={`Чат с ${title}`}>
+    <section
+      className={`conversation${dragging ? ' conversation--drop' : ''}`}
+      aria-label={`Чат с ${title}`}
+      onDragOver={onDragOver}
+      onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
+      onDrop={onDrop}
+    >
       <header className="conversation__head">
         <Link to="/" className="icon-btn conversation__back" aria-label="Назад к чатам">
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
@@ -228,7 +275,14 @@ function Conversation({ chat }: { chat: Chat }) {
       </div>
 
       {canPost(chat) ? (
-        <Composer chatId={chat.id} lastOwn={lastOwn} onSent={() => (stickToBottom.current = true)} />
+        <Composer
+          chatId={chat.id}
+          lastOwn={lastOwn}
+          staged={staged}
+          setStaged={setStaged}
+          onStage={stage}
+          onSent={() => (stickToBottom.current = true)}
+        />
       ) : (
         <div className="composer composer--readonly" role="note">
           В канале публикуют только администраторы
@@ -311,12 +365,13 @@ function MessageList({ items, pending, me, chat, menuFor, setMenuFor }: ListProp
           <div className="bubble-row bubble-row--mine bubble-row--tail" data-pending={p.status}>
             <div className={`bubble${p.status === 'failed' ? ' bubble--failed' : ''}`}>
               {p.reply_to && <Quote reply={p.reply_to} me={me} />}
-              <span className="bubble__text">{p.body}</span>
+              {p.attachments.length > 0 && <PendingAttachments attachments={p.attachments} />}
+              {p.body && <span className="bubble__text">{p.body}</span>}
               <span className="bubble__meta">
                 {p.status === 'sending' ? (
                   <span className="clock" aria-label="Отправляется" />
                 ) : (
-                  <span className="bubble__failed">Не отправлено</span>
+                  <span className="bubble__failed">{p.error ?? 'Не отправлено'}</span>
                 )}
               </span>
             </div>
@@ -392,7 +447,8 @@ function MessageBubble(props: BubbleProps) {
             </span>
           )}
           {m.reply_to && !deleted && <Quote reply={m.reply_to} me={me} />}
-          <span className="bubble__text">{deleted ? 'Сообщение удалено' : m.body}</span>
+          {!deleted && m.attachments?.length > 0 && <MessageAttachments attachments={m.attachments} />}
+          {(deleted || m.body) && <span className="bubble__text">{deleted ? 'Сообщение удалено' : m.body}</span>}
           <span className="bubble__meta">
             {m.edited_at && !deleted && <span className="bubble__edited">изменено</span>}
             <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
@@ -486,13 +542,13 @@ function MessageMenu({ message, mine, chatId, canReply, canDelete, onClose }: Me
         type="button"
         role="menuitem"
         onClick={() => {
-          void navigator.clipboard?.writeText(message.body)
+          void navigator.clipboard?.writeText(message.body || message.attachments.map((a) => a.name).join(', '))
           onClose()
         }}
       >
         Копировать
       </button>
-      {mine && (
+      {mine && message.body && (
         <button
           type="button"
           role="menuitem"
@@ -513,17 +569,28 @@ function MessageMenu({ message, mine, chatId, canReply, canDelete, onClose }: Me
   )
 }
 
-function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Message | null; onSent: () => void }) {
+type ComposerProps = {
+  chatId: string
+  lastOwn: Message | null
+  staged: LocalFile[]
+  setStaged: (files: LocalFile[]) => void
+  onStage: (files: Iterable<File>) => void
+  onSent: () => void
+}
+
+function Composer({ chatId, lastOwn, staged, setStaged, onStage, onSent }: ComposerProps) {
   const me = useAuth((s) => s.user?.id ?? '')
   const send = useMessages((s) => s.send)
   const edit = useMessages((s) => s.edit)
   const setReply = useMessages((s) => s.setReply)
   const setEditing = useMessages((s) => s.setEditing)
   const draft = useMessages(selectDraft(chatId))
+  const recorder = useRecorder()
   const [text, setText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const lastTyping = useRef(0)
   const editingId = draft.editing?.id
 
@@ -547,6 +614,8 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
 
   const trimmed = text.trim()
   const tooLong = [...trimmed].length > MAX_LEN
+  const hasContent = Boolean(trimmed) || staged.length > 0
+  const editing = Boolean(draft.editing)
 
   const cancel = () => {
     if (draft.editing) {
@@ -558,11 +627,18 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
     setError(null)
   }
 
+  const unstage = (localId: string) => {
+    const target = staged.find((f) => f.localId === localId)
+    if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl)
+    setStaged(staged.filter((f) => f.localId !== localId))
+  }
+
   const submit = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (!trimmed || tooLong || saving) return
+    if (tooLong || saving) return
 
     if (draft.editing) {
+      if (!trimmed) return
       const target = draft.editing
       if (trimmed === target.body) {
         cancel()
@@ -581,12 +657,31 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
       return
     }
 
+    if (!hasContent) return
     onSent()
-    void send(chatId, trimmed, draft.replyTo)
+    void send(chatId, trimmed, draft.replyTo, staged)
     if (draft.replyTo) setReply(chatId, null)
     setText('')
+    setStaged([])
     lastTyping.current = 0
     area.current?.focus()
+  }
+
+  const sendVoice = async () => {
+    const recording = await recorder.stop()
+    if (!recording) return
+    onSent()
+    void send(chatId, '', draft.replyTo, [
+      {
+        localId: `voice-${Date.now()}`,
+        kind: 'voice',
+        name: recording.name,
+        blob: recording.blob,
+        size: recording.blob.size,
+        durationMs: recording.durationMs,
+      },
+    ])
+    if (draft.replyTo) setReply(chatId, null)
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -596,7 +691,7 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
     } else if (e.key === 'Escape' && (draft.editing || draft.replyTo)) {
       e.preventDefault()
       cancel()
-    } else if (e.key === 'ArrowUp' && !text && !draft.editing && lastOwn) {
+    } else if (e.key === 'ArrowUp' && !text && !draft.editing && staged.length === 0 && lastOwn) {
       e.preventDefault()
       setEditing(chatId, lastOwn)
     }
@@ -611,7 +706,43 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
     }
   }
 
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (editing || e.clipboardData.files.length === 0) return
+    e.preventDefault()
+    onStage(e.clipboardData.files)
+  }
+
   const context = draft.editing ?? draft.replyTo
+  const shownError = error ?? recorder.error
+
+  if (recorder.state !== 'idle') {
+    return (
+      <div className="composer composer--recording" role="group" aria-label="Запись голосового">
+        <div className="composer__row">
+          <button type="button" className="composer__icon" onClick={recorder.cancel} aria-label="Отменить запись">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path d="M5 7h14M10 7V5h4v2m-7 0 1 13h8l1-13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <span className="recording" aria-live="polite">
+            <span className="recording__dot" aria-hidden="true" />
+            <span data-testid="recording-time">{formatDuration(recorder.elapsed)}</span>
+          </span>
+          <button
+            type="button"
+            className="composer__send"
+            onClick={() => void sendVoice()}
+            disabled={recorder.state !== 'recording'}
+            aria-label="Отправить голосовое"
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path d="M4 12 20 4l-6 16-2.5-6.5L4 12Z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <form className="composer" onSubmit={(e) => void submit(e)}>
@@ -630,15 +761,71 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
                 ? 'Редактирование'
                 : `В ответ ${context.sender_id === me ? 'себе' : context.sender.display_name}`}
             </span>
-            <span className="composer__context-body">{context.body}</span>
+            <span className="composer__context-body">{context.body || 'Вложение'}</span>
           </span>
           <button type="button" className="composer__context-close" onClick={cancel} aria-label="Отменить">
             ×
           </button>
         </div>
       )}
-      {error && <p className="composer__error" role="alert">{error}</p>}
+      {staged.length > 0 && (
+        <ul className="staged" aria-label="Вложения к отправке">
+          {staged.map((f) => (
+            <li key={f.localId} className="staged__item">
+              {f.previewUrl ? (
+                <img src={f.previewUrl} alt={f.name} />
+              ) : (
+                <span className="staged__file">
+                  <span className="staged__name">{f.name}</span>
+                  <span className="staged__size">{formatSize(f.size)}</span>
+                </span>
+              )}
+              <button type="button" onClick={() => unstage(f.localId)} aria-label={`Убрать ${f.name}`}>
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {shownError && (
+        <p className="composer__error" role="alert">
+          {shownError}
+        </p>
+      )}
       <div className="composer__row">
+        {!editing && (
+          <>
+            <button
+              type="button"
+              className="composer__icon"
+              onClick={() => fileInput.current?.click()}
+              aria-label="Прикрепить"
+              disabled={staged.length >= MAX_FILES}
+            >
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path
+                  d="m20 11.5-7.8 7.8a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              aria-label="Прикрепить файл"
+              onChange={(e) => {
+                if (e.target.files?.length) onStage(e.target.files)
+                e.target.value = ''
+              }}
+            />
+          </>
+        )}
         <textarea
           ref={area}
           className="composer__input"
@@ -648,6 +835,7 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
           value={text}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           enterKeyHint="send"
         />
         {tooLong && (
@@ -655,22 +843,30 @@ function Composer({ chatId, lastOwn, onSent }: { chatId: string; lastOwn: Messag
             {[...trimmed].length}/{MAX_LEN}
           </span>
         )}
-        <button
-          type="submit"
-          className="composer__send"
-          disabled={!trimmed || tooLong || saving}
-          aria-label={draft.editing ? 'Сохранить' : 'Отправить'}
-        >
-          {draft.editing ? (
+        {!editing && !hasContent ? (
+          <button type="button" className="composer__send" onClick={() => void recorder.start()} aria-label="Записать голосовое">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-              <path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Zm-6 9a6 6 0 0 0 12 0M12 18v3" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
             </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-              <path d="M4 12 20 4l-6 16-2.5-6.5L4 12Z" fill="currentColor" />
-            </svg>
-          )}
-        </button>
+          </button>
+        ) : (
+          <button
+            type="submit"
+            className="composer__send"
+            disabled={(editing ? !trimmed : !hasContent) || tooLong || saving}
+            aria-label={editing ? 'Сохранить' : 'Отправить'}
+          >
+            {editing ? (
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path d="M4 12 20 4l-6 16-2.5-6.5L4 12Z" fill="currentColor" />
+              </svg>
+            )}
+          </button>
+        )}
       </div>
     </form>
   )

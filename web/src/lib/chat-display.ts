@@ -57,9 +57,18 @@ export function systemText(message: Message, me: string): string {
   }
 }
 
+export function attachmentsText(message: Message): string {
+  const list = message.attachments ?? []
+  if (list.length === 0) return ''
+  const first = list[0]!
+  if (first.kind === 'voice') return '🎤 Голосовое сообщение'
+  if (list.every((a) => a.kind === 'image')) return list.length > 1 ? `🖼 ${list.length} фото` : '🖼 Фото'
+  return list.length > 1 ? `📎 ${list.length} файла` : `📎 ${first.name}`
+}
+
 export function previewText(chat: Chat, message: Message, me: string): string {
   if (message.kind === 'system') return systemText(message, me)
-  const body = message.deleted_at ? 'Сообщение удалено' : message.body
+  const body = message.deleted_at ? 'Сообщение удалено' : message.body || attachmentsText(message)
   if (message.sender_id === me) return `Вы: ${body}`
   if (chat.kind === 'group') return `${message.sender.display_name}: ${body}`
   return body

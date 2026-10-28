@@ -19,6 +19,10 @@ let accessToken: string | null = null
 let refreshing: Promise<AuthResponse> | null = null
 let onUnauthorized: () => void = () => {}
 
+export function getAccessToken(): string | null {
+  return accessToken
+}
+
 export function setAccessToken(token: string | null) {
   accessToken = token
 }
