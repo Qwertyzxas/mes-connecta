@@ -1,18 +1,48 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { chatApi } from '../lib/chat-api'
+import { decryptBlob, type SecretAttachment } from '../lib/e2e'
 import type { Attachment } from '../lib/types'
 import { formatDuration, formatSize } from '../lib/upload'
 import type { PendingAttachment } from '../store/messages'
 
+const secretUrls = new Map<string, Promise<string>>()
+
+function secretUrl(att: SecretAttachment): Promise<string> {
+  let pending = secretUrls.get(att.id)
+  if (!pending) {
+    pending = (async () => {
+      let res = await fetch(att.url)
+      if (!res.ok) res = await fetch((await chatApi.fileUrl(att.id)).url)
+      if (!res.ok) throw new Error('download failed')
+      const blob = await decryptBlob(await res.arrayBuffer(), att.secret.key, att.secret.iv, att.content_type)
+      return URL.createObjectURL(blob)
+    })()
+    pending.catch(() => secretUrls.delete(att.id))
+    secretUrls.set(att.id, pending)
+  }
+  return pending
+}
+
 function useFreshUrl(attachment: Attachment) {
-  const [url, setUrl] = useState(attachment.url)
+  const secret = (attachment as Partial<SecretAttachment>).secret
+  const [url, setUrl] = useState(secret ? '' : attachment.url)
   const retried = useRef(false)
   useEffect(() => {
-    setUrl(attachment.url)
     retried.current = false
-  }, [attachment.url])
+    if (!secret) {
+      setUrl(attachment.url)
+      return
+    }
+    let alive = true
+    secretUrl(attachment as SecretAttachment)
+      .then((u) => alive && setUrl(u))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [attachment, secret])
   const onError = () => {
-    if (retried.current) return
+    if (secret || retried.current) return
     retried.current = true
     chatApi
       .fileUrl(attachment.id)
@@ -53,7 +83,7 @@ function ImageThumb({ attachment, single, onOpen }: { attachment: Attachment; si
       onClick={onOpen}
       aria-label={`Открыть ${attachment.name}`}
     >
-      <img src={url} alt={attachment.name} loading="lazy" onError={onError} />
+      {url && <img src={url} alt={attachment.name} loading="lazy" onError={onError} />}
     </button>
   )
 }
@@ -67,7 +97,7 @@ function Lightbox({ attachment, onClose }: { attachment: Attachment; onClose: ()
   }, [onClose])
   return (
     <div className="lightbox" role="dialog" aria-modal="true" aria-label="Просмотр фото" onClick={onClose}>
-      <img src={url} alt={attachment.name} onError={onError} onClick={(e) => e.stopPropagation()} />
+      {url && <img src={url} alt={attachment.name} onError={onError} onClick={(e) => e.stopPropagation()} />}
       <div className="lightbox__bar" onClick={(e) => e.stopPropagation()}>
         <span>{attachment.name}</span>
         <a href={url} download={attachment.name}>
@@ -92,7 +122,7 @@ function FileIcon() {
 function FileCard({ attachment }: { attachment: Attachment }) {
   const { url } = useFreshUrl(attachment)
   return (
-    <a className="file-card" href={url} download={attachment.name} data-testid="file-card">
+    <a className="file-card" href={url || undefined} download={attachment.name} data-testid="file-card">
       <span className="file-card__icon">
         <FileIcon />
       </span>
@@ -148,7 +178,7 @@ function VoicePlayer({ attachment }: { attachment: Attachment }) {
       <span className="voice__time">{formatDuration((playing || position > 0 ? position : duration) * 1000)}</span>
       <audio
         ref={audio}
-        src={url}
+        src={url || undefined}
         preload="metadata"
         onError={onError}
         onPlay={() => setPlaying(true)}

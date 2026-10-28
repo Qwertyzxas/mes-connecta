@@ -2326,3 +2326,62 @@ a:hover {
 .call--ended .call__status {
   color: #ffb4b6;
 }
+
+.lock-icon {
+  flex: none;
+  margin-right: 4px;
+  color: #22b35e;
+  vertical-align: -2px;
+}
+
+.messages__intro--secret {
+  max-width: 420px;
+  margin: 12px auto;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 13.5px;
+  text-align: center;
+}
+
+.messages__intro--secret .lock-icon {
+  margin: 0 auto 6px;
+}
+
+.bubble__text--sealed {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.secret-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px max(14px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.secret-gate p {
+  margin: 0;
+}
+
+.secret-gate__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.key-code {
+  display: block;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  word-spacing: 0.3em;
+  text-align: center;
+}

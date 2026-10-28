@@ -15,14 +15,17 @@ import { Link, Navigate, useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MessageAttachments, PendingAttachments } from '../components/Attachments'
 import { Avatar } from '../components/Avatar'
+import { Button } from '../components/Button'
+import { LockIcon } from '../components/LockIcon'
 import { PhoneIcon, VideoIcon } from '../components/CallLayer'
 import { ChatInfo } from '../components/ChatInfo'
 import { Ticks } from '../components/Sidebar'
 import { ApiError } from '../lib/api'
 import { startCall, useCall } from '../lib/calls'
+import { forgetChatKeys, generateKeyPair, hasKeys, storeKeyPair } from '../lib/e2e'
 import { chatApi } from '../lib/chat-api'
 import { chatKey, chatsKey, markReadLocally } from '../lib/chat-cache'
-import { canManage, canPost, chatAvatarId, chatTitle, membersText, systemText } from '../lib/chat-display'
+import { canManage, canPost, chatAvatarId, chatTitle, membersText, secretStatus, systemText } from '../lib/chat-display'
 import { describeError } from '../lib/errors'
 import { dayKey, formatDay, formatTime, lastSeenText } from '../lib/format'
 import { useDocumentVisible, useNow } from '../lib/hooks'
@@ -198,6 +201,7 @@ function Conversation({ chat }: { chat: Chat }) {
     return null
   }, [items, me])
 
+  const keysReady = useSecretKeys(chat)
   const title = chatTitle(chat)
   const typingName = typing && chat.kind === 'group' ? memberNames.get(typing.userId) : undefined
   const status = isTyping
@@ -205,7 +209,7 @@ function Conversation({ chat }: { chat: Chat }) {
       ? `${typingName} печатает…`
       : 'печатает…'
     : chat.peer
-      ? lastSeenText(chat.peer.online, chat.peer.last_seen_at, now)
+      ? (secretStatus(chat) ?? lastSeenText(chat.peer.online, chat.peer.last_seen_at, now))
       : membersText(chat)
   const live = isTyping || Boolean(chat.peer?.online)
 
@@ -242,19 +246,31 @@ function Conversation({ chat }: { chat: Chat }) {
           <Avatar id={chatAvatarId(chat)} name={title} size={40} online={chat.peer?.online} />
         </button>
         <div className="conversation__who" onClick={() => setShowInfo(true)}>
-          <h1 className="conversation__name">{title}</h1>
+          <h1 className="conversation__name">
+            {chat.kind === 'secret' && <LockIcon />}
+            {title}
+          </h1>
           <p className={`conversation__status${live ? ' conversation__status--live' : ''}`} data-testid="peer-status">
             {status}
           </p>
         </div>
-        {chat.kind !== 'channel' && <CallButtons chat={chat} />}
+        {chat.kind !== 'channel' && chat.kind !== 'secret' && <CallButtons chat={chat} />}
       </header>
 
       <div className="messages" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label="Сообщения">
         {state?.status === 'loading' && <p className="messages__note">Загружаем сообщения…</p>}
         {state?.status === 'error' && <p className="messages__note">Не удалось загрузить сообщения</p>}
         {state?.loadingOlder && <p className="messages__note">Загружаем историю…</p>}
-        {state?.status === 'ready' && items.length === 0 && !pending?.length && chat.peer && (
+        {chat.kind === 'secret' && (
+          <div className="messages__intro messages__intro--secret" data-testid="secret-intro">
+            <LockIcon size={28} />
+            <p>
+              Секретный чат. Сообщения шифруются на ваших устройствах, сервер их не видит. Переписка доступна только на
+              этом устройстве.
+            </p>
+          </div>
+        )}
+        {chat.kind !== 'secret' && state?.status === 'ready' && items.length === 0 && !pending?.length && chat.peer && (
           <div className="messages__intro">
             <Avatar id={chat.peer.id} name={chat.peer.display_name} size={72} />
             <p>Это начало переписки с @{chat.peer.username}</p>
@@ -277,7 +293,13 @@ function Conversation({ chat }: { chat: Chat }) {
         )}
       </div>
 
-      {canPost(chat) ? (
+      {chat.kind === 'secret' && !canPost(chat) ? (
+        <SecretGate chat={chat} />
+      ) : chat.kind === 'secret' && !keysReady ? (
+        <div className="composer composer--readonly" role="note">
+          Ключи этого секретного чата есть только на другом устройстве
+        </div>
+      ) : canPost(chat) ? (
         <Composer
           chatId={chat.id}
           lastOwn={lastOwn}
@@ -456,7 +478,11 @@ function MessageBubble(props: BubbleProps) {
           )}
           {m.reply_to && !deleted && <Quote reply={m.reply_to} me={me} />}
           {!deleted && m.attachments?.length > 0 && <MessageAttachments attachments={m.attachments} />}
-          {(deleted || m.body) && <span className="bubble__text">{deleted ? 'Сообщение удалено' : m.body}</span>}
+          {m.undecryptable && !deleted ? (
+            <span className="bubble__text bubble__text--sealed">🔒 Не удалось расшифровать сообщение</span>
+          ) : (
+            (deleted || m.body) && <span className="bubble__text">{deleted ? 'Сообщение удалено' : m.body}</span>
+          )}
           <span className="bubble__meta">
             {m.edited_at && !deleted && <span className="bubble__edited">изменено</span>}
             <time dateTime={m.created_at}>{formatTime(m.created_at)}</time>
@@ -902,6 +928,82 @@ function CallButtons({ chat }: { chat: Chat }) {
       >
         <VideoIcon />
       </button>
+    </div>
+  )
+}
+
+function useSecretKeys(chat: Chat) {
+  const [ready, setReady] = useState(true)
+  const secret = chat.kind === 'secret' && chat.secret_state === 'active'
+  useEffect(() => {
+    if (!secret) return
+    let alive = true
+    void hasKeys(chat.id).then((ok) => alive && setReady(ok))
+    return () => {
+      alive = false
+    }
+  }, [chat.id, secret])
+  return !secret || ready
+}
+
+function SecretGate({ chat }: { chat: Chat }) {
+  const qc = useQueryClient()
+  const name = chatTitle(chat)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'accept' | 'decline' | null>(null)
+
+  if (chat.my_key) {
+    return (
+      <div className="composer composer--readonly" role="note">
+        Ждём, пока {name} примет приглашение в секретный чат
+      </div>
+    )
+  }
+
+  const accept = async () => {
+    setBusy('accept')
+    setError(null)
+    try {
+      const pair = await generateKeyPair()
+      await storeKeyPair(chat.id, pair)
+      const updated = await chatApi.acceptSecret(chat.id, pair.publicKey).catch(async (err: unknown) => {
+        await forgetChatKeys(chat.id)
+        throw err
+      })
+      qc.setQueryData(chatKey(chat.id), updated)
+      void qc.invalidateQueries({ queryKey: chatsKey })
+    } catch (err) {
+      setError(describeError(err).message ?? 'Не удалось принять приглашение')
+    } finally {
+      setBusy(null)
+    }
+  }
+  const decline = async () => {
+    setBusy('decline')
+    try {
+      await chatApi.leave(chat.id)
+      qc.setQueryData<Chat[]>(chatsKey, (list) => list?.filter((c) => c.id !== chat.id))
+      useMessages.getState().forget(chat.id)
+    } catch (err) {
+      setError(describeError(err).message ?? 'Не удалось отклонить приглашение')
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="secret-gate" role="region" aria-label="Приглашение в секретный чат">
+      <p>
+        {name} приглашает вас в секретный чат. Ключи шифрования будут храниться только на этом устройстве.
+      </p>
+      {error && <p className="alert">{error}</p>}
+      <div className="secret-gate__actions">
+        <Button variant="ghost" onClick={() => void decline()} loading={busy === 'decline'} disabled={busy !== null}>
+          Отклонить
+        </Button>
+        <Button onClick={() => void accept()} loading={busy === 'accept'} disabled={busy !== null}>
+          Принять
+        </Button>
+      </div>
     </div>
   )
 }

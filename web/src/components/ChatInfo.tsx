@@ -8,11 +8,45 @@ import { UserPicker } from './UserPicker'
 import { chatApi } from '../lib/chat-api'
 import { chatKey, chatsKey } from '../lib/chat-cache'
 import { canManage, chatAvatarId, chatTitle, membersText, roleLabel } from '../lib/chat-display'
+import { fingerprint, forgetChatKeys } from '../lib/e2e'
 import { describeError } from '../lib/errors'
 import { lastSeenText } from '../lib/format'
 import type { Chat, Member, PublicUser } from '../lib/types'
 import { useAuth } from '../store/auth'
 import { useMessages } from '../store/messages'
+
+const headings: Record<Chat['kind'], string> = {
+  direct: 'Профиль',
+  group: 'Группа',
+  channel: 'Канал',
+  secret: 'Секретный чат',
+}
+
+function KeySection({ chat }: { chat: Chat }) {
+  const [code, setCode] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    void fingerprint(chat).then((c) => alive && setCode(c))
+    return () => {
+      alive = false
+    }
+  }, [chat])
+  return (
+    <section className="info__section" aria-label="Ключ шифрования">
+      <h4>Ключ шифрования</h4>
+      {code ? (
+        <>
+          <code className="key-code" data-testid="key-fingerprint">
+            {code}
+          </code>
+          <p className="muted">Сравните код с собеседником. Если коды совпадают, переписку никто не подменяет.</p>
+        </>
+      ) : (
+        <p className="muted">Код появится, когда собеседник примет приглашение.</p>
+      )}
+    </section>
+  )
+}
 
 export function ChatInfo({ chat, onClose }: { chat: Chat; onClose: () => void }) {
   const title = chatTitle(chat)
@@ -24,7 +58,7 @@ export function ChatInfo({ chat, onClose }: { chat: Chat; onClose: () => void })
             <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
         </button>
-        <h2>{chat.kind === 'direct' ? 'Профиль' : chat.kind === 'group' ? 'Группа' : 'Канал'}</h2>
+        <h2>{headings[chat.kind]}</h2>
       </header>
       <div className="info__body">
         <div className="info__hero">
@@ -39,8 +73,9 @@ export function ChatInfo({ chat, onClose }: { chat: Chat; onClose: () => void })
           </p>
         </div>
         <MuteSection chat={chat} />
-        {chat.kind !== 'direct' && <AboutSection chat={chat} />}
-        {chat.kind !== 'direct' && <MembersSection chat={chat} />}
+        {chat.kind === 'secret' && <KeySection chat={chat} />}
+        {(chat.kind === 'group' || chat.kind === 'channel') && <AboutSection chat={chat} />}
+        {(chat.kind === 'group' || chat.kind === 'channel') && <MembersSection chat={chat} />}
         {chat.kind !== 'direct' && <LeaveSection chat={chat} />}
       </div>
     </aside>
@@ -258,10 +293,11 @@ function LeaveSection({ chat }: { chat: Chat }) {
       qc.setQueryData<Chat[]>(chatsKey, (list) => list?.filter((c) => c.id !== chat.id))
       qc.removeQueries({ queryKey: chatKey(chat.id) })
       forget(chat.id)
+      if (chat.kind === 'secret') void forgetChatKeys(chat.id)
       void navigate('/')
     },
   })
-  const label = chat.kind === 'group' ? 'Выйти из группы' : 'Покинуть канал'
+  const label = chat.kind === 'group' ? 'Выйти из группы' : chat.kind === 'secret' ? 'Удалить секретный чат' : 'Покинуть канал'
 
   return (
     <section className="info__section">

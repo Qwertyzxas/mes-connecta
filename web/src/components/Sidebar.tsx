@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Avatar } from './Avatar'
+import { LockIcon } from './LockIcon'
 import { Logo } from './Logo'
-import { NewChannelDialog, NewGroupDialog } from './NewChatDialogs'
+import { NewChannelDialog, NewGroupDialog, NewSecretDialog } from './NewChatDialogs'
 import { chatApi } from '../lib/chat-api'
 import { chatsKey, upsertChat } from '../lib/chat-cache'
-import { chatAvatarId, chatTitle, plural, previewText } from '../lib/chat-display'
+import { chatAvatarId, chatTitle, plural, previewText, secretStatus } from '../lib/chat-display'
 import { describeError } from '../lib/errors'
 import { formatListTime, lastSeenText } from '../lib/format'
 import { useDebounced, useNow } from '../lib/hooks'
@@ -22,7 +23,7 @@ export function Sidebar() {
   const user = useAuth((s) => s.user)
   const status = useConnection((s) => s.status)
   const [query, setQuery] = useState('')
-  const [dialog, setDialog] = useState<'group' | 'channel' | null>(null)
+  const [dialog, setDialog] = useState<'group' | 'channel' | 'secret' | null>(null)
   const normalized = normalizeUsername(useDebounced(query, 250))
   const searching = query.trim().length > 0
 
@@ -64,11 +65,12 @@ export function Sidebar() {
 
       {dialog === 'group' && <NewGroupDialog onClose={() => setDialog(null)} />}
       {dialog === 'channel' && <NewChannelDialog onClose={() => setDialog(null)} />}
+      {dialog === 'secret' && <NewSecretDialog onClose={() => setDialog(null)} />}
     </aside>
   )
 }
 
-function NewMenu({ onPick }: { onPick: (kind: 'group' | 'channel') => void }) {
+function NewMenu({ onPick }: { onPick: (kind: 'group' | 'channel' | 'secret') => void }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -87,7 +89,7 @@ function NewMenu({ onPick }: { onPick: (kind: 'group' | 'channel') => void }) {
     }
   }, [open])
 
-  const pick = (kind: 'group' | 'channel') => {
+  const pick = (kind: 'group' | 'channel' | 'secret') => {
     setOpen(false)
     onPick(kind)
   }
@@ -113,6 +115,9 @@ function NewMenu({ onPick }: { onPick: (kind: 'group' | 'channel') => void }) {
           </button>
           <button type="button" role="menuitem" onClick={() => pick('channel')}>
             Новый канал
+          </button>
+          <button type="button" role="menuitem" onClick={() => pick('secret')}>
+            Секретный чат
           </button>
         </div>
       )}
@@ -228,6 +233,7 @@ function ChatList() {
 
 function KindIcon({ kind }: { kind: Chat['kind'] }) {
   if (kind === 'direct') return null
+  if (kind === 'secret') return <LockIcon size={14} />
   return (
     <svg className="kind-icon" viewBox="0 0 24 24" width="15" height="15" aria-label={kind === 'group' ? 'группа' : 'канал'}>
       {kind === 'group' ? (
@@ -272,7 +278,9 @@ function ChatRow({ chat, isTyping }: { chat: Chat; isTyping: boolean }) {
               ? 'печатает…'
               : last
                 ? previewText(chat, last, me)
-                : chat.peer
+                : secretStatus(chat)
+                  ? secretStatus(chat)
+                  : chat.peer
                   ? lastSeenText(chat.peer.online, chat.peer.last_seen_at)
                   : ''}
           </span>

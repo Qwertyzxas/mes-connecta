@@ -151,10 +151,14 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := s.store.RotateSession(r.Context(), oldHash, newHash, s.now().Add(s.cfg.RefreshTTL))
+	expires := s.now().Add(s.cfg.RefreshTTL)
+	sess, err := s.store.RotateSession(r.Context(), oldHash, newHash, expires)
 	if errors.Is(err, store.ErrNotFound) {
-		s.handleStaleRefresh(w, r, oldHash)
-		return
+		sess, err = s.store.ReissueFromPrev(r.Context(), oldHash, newHash, expires, s.refreshGrace)
+		if errors.Is(err, store.ErrNotFound) {
+			s.handleStaleRefresh(w, r, oldHash)
+			return
+		}
 	}
 	if err != nil {
 		s.internalError(w, r, err)

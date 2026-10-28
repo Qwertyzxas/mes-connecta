@@ -58,6 +58,20 @@ func (s *Store) RotateSession(ctx context.Context, oldHash, newHash []byte, expi
 	))
 }
 
+func (s *Store) ReissueFromPrev(ctx context.Context, prevHash, newHash []byte, expiresAt time.Time, grace time.Duration) (Session, error) {
+	return scanSession(s.pool.QueryRow(ctx, `
+		UPDATE sessions
+		SET token_hash = $2,
+		    expires_at = $3
+		WHERE prev_token_hash = $1
+		  AND revoked_at IS NULL
+		  AND expires_at > now()
+		  AND last_used_at > now() - make_interval(secs => $4)
+		RETURNING `+sessionColumns,
+		prevHash, newHash, expiresAt, grace.Seconds(),
+	))
+}
+
 func (s *Store) SessionByPrevHash(ctx context.Context, hash []byte, grace time.Duration) (Session, bool, error) {
 	var recent bool
 	sess, err := scanSession(s.pool.QueryRow(ctx, `
