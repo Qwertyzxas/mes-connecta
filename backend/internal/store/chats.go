@@ -24,6 +24,10 @@ const (
 	KindDirect  = "direct"
 	KindGroup   = "group"
 	KindChannel = "channel"
+	KindSecret  = "secret"
+
+	SecretPending = "pending"
+	SecretActive  = "active"
 
 	RoleOwner  = "owner"
 	RoleAdmin  = "admin"
@@ -57,6 +61,9 @@ type Chat struct {
 	Unread          int64       `json:"unread"`
 	LastMessage     *Message    `json:"last_message"`
 	UpdatedAt       time.Time   `json:"updated_at"`
+	SecretState     string      `json:"secret_state,omitempty"`
+	MyKey           string      `json:"my_key,omitempty"`
+	PeerKey         string      `json:"peer_key,omitempty"`
 }
 
 type Member struct {
@@ -66,16 +73,24 @@ type Member struct {
 }
 
 type Membership struct {
-	Kind string
-	Role string
+	Kind        string
+	Role        string
+	SecretState string
+	Bound       bool
 }
 
 func (m Membership) CanPost() bool {
-	return m.Kind != KindChannel || m.Role == RoleOwner || m.Role == RoleAdmin
+	switch m.Kind {
+	case KindSecret:
+		return m.SecretState == SecretActive && m.Bound
+	case KindChannel:
+		return m.Role == RoleOwner || m.Role == RoleAdmin
+	}
+	return true
 }
 
 func (m Membership) CanManage() bool {
-	return m.Kind != KindDirect && (m.Role == RoleOwner || m.Role == RoleAdmin)
+	return (m.Kind == KindGroup || m.Kind == KindChannel) && (m.Role == RoleOwner || m.Role == RoleAdmin)
 }
 
 type ChannelResult struct {
@@ -285,18 +300,36 @@ func (s *Store) CreateGroup(ctx context.Context, g NewGroup) (string, Message, e
 }
 
 func (s *Store) Membership(ctx context.Context, chatID, userID string) (Membership, bool, error) {
-	var m Membership
+	return s.membership(ctx, chatID, userID, "")
+}
+
+func (s *Store) MembershipFor(ctx context.Context, chatID, userID, sessionID string) (Membership, bool, error) {
+	return s.membership(ctx, chatID, userID, sessionID)
+}
+
+func (s *Store) membership(ctx context.Context, chatID, userID, sessionID string) (Membership, bool, error) {
+	var (
+		m       Membership
+		session *string
+	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT c.kind, cm.role
+		SELECT c.kind, cm.role, COALESCE(c.secret_state, ''), cm.session_id::text
 		FROM conversation_members cm
 		JOIN conversations c ON c.id = cm.conversation_id
 		WHERE cm.conversation_id = $1::uuid AND cm.user_id = $2::uuid`,
 		chatID, userID,
-	).Scan(&m.Kind, &m.Role)
+	).Scan(&m.Kind, &m.Role, &m.SecretState, &session)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Membership{}, false, nil
 	}
-	return m, err == nil, err
+	if err != nil {
+		return Membership{}, false, err
+	}
+	m.Bound = session != nil && *session == sessionID
+	if sessionID != "" && session != nil && !m.Bound {
+		return Membership{}, false, nil
+	}
+	return m, true, nil
 }
 
 func (s *Store) IsMember(ctx context.Context, chatID, userID string) (bool, error) {
@@ -600,19 +633,23 @@ const chatQuery = `
 	           AND x.seq > me.last_read_seq
 	           AND x.sender_id <> me.user_id
 	           AND x.kind = 'text'
-	           AND x.deleted_at IS NULL)
+	           AND x.deleted_at IS NULL),
+	       COALESCE(c.secret_state, ''), COALESCE(me.public_key, ''),
+	       COALESCE((SELECT o.public_key FROM conversation_members o
+	                  WHERE o.conversation_id = c.id AND o.user_id <> me.user_id LIMIT 1), '')
 	FROM conversation_members me
 	JOIN conversations c ON c.id = me.conversation_id
 	LEFT JOIN LATERAL (
 		SELECT u.id, u.username, u.display_name, u.last_seen_at
 		FROM conversation_members o
 		JOIN users u ON u.id = o.user_id
-		WHERE c.kind = 'direct' AND o.conversation_id = c.id AND o.user_id <> me.user_id
+		WHERE c.kind IN ('direct', 'secret') AND o.conversation_id = c.id AND o.user_id <> me.user_id
 		LIMIT 1
 	) p ON true
 	LEFT JOIN messages m ON m.conversation_id = c.id AND m.seq = c.last_seq
 	LEFT JOIN users mu ON mu.id = m.sender_id
-	WHERE me.user_id = $1::uuid`
+	WHERE me.user_id = $1::uuid
+	  AND (me.session_id IS NULL OR me.session_id = $2::uuid)`
 
 func scanChat(row scanner) (Chat, error) {
 	var (
@@ -641,7 +678,7 @@ func scanChat(row scanner) (Chat, error) {
 		&peerID, &peerName, &peerDisp, &peerSeen,
 		&msgID, &msgSeq, &msgRev, &msgKind, &msgMeta, &msgSender, &senderName, &senderDisp,
 		&msgClient, &msgBody, &msgAt, &msgEdited, &msgDeleted,
-		&c.Unread,
+		&c.Unread, &c.SecretState, &c.MyKey, &c.PeerKey,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Chat{}, ErrNotFound
@@ -663,15 +700,16 @@ func scanChat(row scanner) (Chat, error) {
 		if len(msgMeta) > 0 {
 			c.LastMessage.Meta = msgMeta
 		}
+		c.LastMessage.E2E = c.Kind == KindSecret
 	}
 	return c, nil
 }
 
-func (s *Store) ListChats(ctx context.Context, userID string) ([]Chat, error) {
+func (s *Store) ListChats(ctx context.Context, userID, sessionID string) ([]Chat, error) {
 	rows, err := s.pool.Query(ctx, chatQuery+`
-		  AND (c.last_seq > 0 OR c.created_by = me.user_id)
+		  AND (c.last_seq > 0 OR c.created_by = me.user_id OR c.kind = 'secret')
 		ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`,
-		userID,
+		userID, nullable(sessionID),
 	)
 	if err != nil {
 		return nil, err
@@ -711,8 +749,8 @@ func (s *Store) finishMessages(ctx context.Context, messages []*Message) error {
 	return nil
 }
 
-func (s *Store) GetChat(ctx context.Context, userID, chatID string) (Chat, error) {
-	c, err := scanChat(s.pool.QueryRow(ctx, chatQuery+` AND c.id = $2::uuid`, userID, chatID))
+func (s *Store) GetChat(ctx context.Context, userID, sessionID, chatID string) (Chat, error) {
+	c, err := scanChat(s.pool.QueryRow(ctx, chatQuery+` AND c.id = $3::uuid`, userID, nullable(sessionID), chatID))
 	if err != nil || c.LastMessage == nil {
 		return c, err
 	}
@@ -728,4 +766,11 @@ func (s *Store) ChatTitle(ctx context.Context, chatID string) (string, string, e
 	var kind, title string
 	err := s.pool.QueryRow(ctx, `SELECT kind, COALESCE(title, '') FROM conversations WHERE id = $1::uuid`, chatID).Scan(&kind, &title)
 	return kind, title, err
+}
+
+func nullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

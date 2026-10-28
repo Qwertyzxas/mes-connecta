@@ -279,4 +279,13 @@ func (s *Server) markRevoked(ctx context.Context, userID, sessionID string) {
 	if err := s.hub.RevokeSession(ctx, userID, sessionID); err != nil {
 		s.log.Error("failed to close realtime connections", "session_id", sessionID, "err", err)
 	}
+	chats, err := s.store.SecretChatsForSession(ctx, sessionID)
+	if err != nil {
+		s.log.Error("failed to load secret chats", "session_id", sessionID, "err", err)
+	}
+	for _, id := range chats {
+		if err := s.closeSecret(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("failed to close secret chat", "chat_id", id, "err", err)
+		}
+	}
 }

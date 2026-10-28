@@ -89,13 +89,17 @@ func (s *Server) signMessages(ms []store.Message) {
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	me := claimsFrom(r.Context()).Subject
 	chatID := chatIDFrom(r.Context())
-	if !membershipFrom(r.Context()).CanPost() {
-		writeError(w, http.StatusForbidden, "read_only", "only admins can post in this channel")
+	if !s.canPost(w, r) {
 		return
 	}
 
 	q := r.URL.Query()
 	kind := q.Get("kind")
+	secret := membershipFrom(r.Context()).Kind == store.KindSecret
+	if secret && kind != "file" {
+		writeValidation(w, map[string]string{"kind": "invalid"})
+		return
+	}
 	limit, ok := limits[kind]
 	if !ok {
 		writeValidation(w, map[string]string{"kind": "invalid"})
@@ -161,6 +165,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		if att.ContentType == "" {
 			att.ContentType = sniffed
 		}
+	}
+	if secret {
+		att.Name = "encrypted"
+		att.ContentType = "application/octet-stream"
 	}
 	att.ObjectKey = "att/" + chatID + "/" + att.ID
 

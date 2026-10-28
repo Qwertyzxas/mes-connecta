@@ -72,7 +72,8 @@ func (s *Store) PushTargets(ctx context.Context, chatID, senderID string) ([]Pus
 		JOIN sessions se ON se.id = ps.session_id AND se.revoked_at IS NULL AND se.expires_at > now()
 		WHERE cm.conversation_id = $1::uuid
 		  AND cm.user_id <> $2::uuid
-		  AND NOT cm.muted`,
+		  AND NOT cm.muted
+		  AND (cm.session_id IS NULL OR cm.session_id = ps.session_id)`,
 		chatID, senderID,
 	)
 	if err != nil {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"regexp"
@@ -12,11 +13,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"connecta/internal/realtime"
 	"connecta/internal/store"
 )
 
 const (
 	maxMessageLen   = 4096
+	maxCipherLen    = 48 << 10
+	minCipherBytes  = 12 + 16 + 1
 	defaultPageSize = 50
 	maxPageSize     = 100
 	searchLimit     = 20
@@ -48,7 +52,8 @@ func (s *Server) requireMember(next http.Handler) http.Handler {
 			writeError(w, http.StatusNotFound, "chat_not_found", "chat not found")
 			return
 		}
-		m, ok, err := s.store.Membership(r.Context(), chatID, claimsFrom(r.Context()).Subject)
+		claims := claimsFrom(r.Context())
+		m, ok, err := s.store.MembershipFor(r.Context(), chatID, claims.Subject, claims.SessionID)
 		if err != nil {
 			s.internalError(w, r, err)
 			return
@@ -150,7 +155,7 @@ func (s *Server) handleOpenDirect(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 	me := claimsFrom(r.Context()).Subject
-	chats, err := s.store.ListChats(r.Context(), me)
+	chats, err := s.store.ListChats(r.Context(), me, claimsFrom(r.Context()).SessionID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -171,7 +176,8 @@ func (s *Server) handleListChats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetChat(w http.ResponseWriter, r *http.Request) {
-	chat, err := s.store.GetChat(r.Context(), claimsFrom(r.Context()).Subject, chatIDFrom(r.Context()))
+	claims := claimsFrom(r.Context())
+	chat, err := s.store.GetChat(r.Context(), claims.Subject, claims.SessionID, chatIDFrom(r.Context()))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "chat_not_found", "chat not found")
 		return
@@ -225,6 +231,20 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, messages)
 }
 
+func validateCipher(body string) string {
+	if body == "" {
+		return "empty"
+	}
+	if len(body) > maxCipherLen {
+		return "too_long"
+	}
+	raw, err := base64.StdEncoding.DecodeString(body)
+	if err != nil || len(raw) < minCipherBytes {
+		return "invalid"
+	}
+	return ""
+}
+
 func validateBody(body string) string {
 	switch {
 	case body == "":
@@ -262,9 +282,14 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		fields["reply_to_id"] = "invalid"
 	}
 	attachmentIDs, ok := normalizeIDs(req.AttachmentIDs)
+	secret := membershipFrom(r.Context()).Kind == store.KindSecret
 	switch {
 	case !ok || len(attachmentIDs) > store.MaxAttachmentsPerMessage:
 		fields["attachment_ids"] = "invalid"
+	case secret:
+		if p := validateCipher(req.Body); p != "" {
+			fields["body"] = p
+		}
 	case len(attachmentIDs) > 0 && req.Body == "":
 	default:
 		if p := validateBody(req.Body); p != "" {
@@ -275,8 +300,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeValidation(w, fields)
 		return
 	}
-	if !membershipFrom(r.Context()).CanPost() {
-		writeError(w, http.StatusForbidden, "read_only", "only admins can post in this channel")
+	if !s.canPost(w, r) {
 		return
 	}
 	if !s.allow(w, r, "send:"+me, 30, 10*time.Second) {
@@ -348,8 +372,15 @@ func (s *Server) handleEditMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Body = strings.TrimSpace(req.Body)
-	if p := validateBody(req.Body); p != "" {
+	validate := validateBody
+	if membershipFrom(r.Context()).Kind == store.KindSecret {
+		validate = validateCipher
+	}
+	if p := validate(req.Body); p != "" {
 		writeValidation(w, map[string]string{"body": p})
+		return
+	}
+	if !s.canPost(w, r) {
 		return
 	}
 	if !s.allow(w, r, "send:"+me, 30, 10*time.Second) {
@@ -420,12 +451,39 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) broadcastToChat(ctx context.Context, chatID string, event any) {
-	members, err := s.store.MemberIDs(ctx, chatID)
+	targets, err := s.store.ChatTargets(ctx, chatID)
 	if err != nil {
 		s.log.Error("load chat members failed", "chat_id", chatID, "err", err)
 		return
 	}
-	if err := s.hub.Publish(ctx, members, event); err != nil {
-		s.log.Error("realtime publish failed", "chat_id", chatID, "err", err)
+	s.publishTargets(ctx, targets, event)
+}
+
+func (s *Server) publishTargets(ctx context.Context, targets []store.Target, event any) {
+	list := make([]realtime.Target, 0, len(targets))
+	for _, t := range targets {
+		list = append(list, realtime.Target{UserID: t.UserID, SessionID: t.SessionID})
 	}
+	if err := s.hub.PublishTargets(ctx, list, event); err != nil {
+		s.log.Error("realtime publish failed", "err", err)
+	}
+}
+
+func (s *Server) publishExcept(ctx context.Context, userID, sessionID string, event any) {
+	if err := s.hub.PublishTargets(ctx, []realtime.Target{{UserID: userID, Except: sessionID}}, event); err != nil {
+		s.log.Error("realtime publish failed", "err", err)
+	}
+}
+
+func (s *Server) canPost(w http.ResponseWriter, r *http.Request) bool {
+	m := membershipFrom(r.Context())
+	if m.CanPost() {
+		return true
+	}
+	if m.Kind == store.KindSecret {
+		writeError(w, http.StatusConflict, "secret_not_ready", "secret chat is not accepted yet")
+		return false
+	}
+	writeError(w, http.StatusForbidden, "read_only", "only admins can post in this channel")
+	return false
 }
